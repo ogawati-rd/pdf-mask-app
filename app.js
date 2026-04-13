@@ -932,24 +932,26 @@
   }
 
   async function showAllMasks() {
-    for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
-      const pageState = getPageState(pageNum);
-      if (!pageState) continue;
-      pageState.masks.forEach((m) => { m.userHidden = false; });
-      redrawOverlayForPage(pageNum);
-    }
-    await persistPageState();
+  // 全表示 = 全てのカバーを外す
+  for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
+    const pageState = getPageState(pageNum);
+    if (!pageState) continue;
+    pageState.masks.forEach((m) => { m.userHidden = true; });
+    redrawOverlayForPage(pageNum);
   }
+  await persistPageState();
+}
 
-  async function hideAllMasks() {
-    for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
-      const pageState = getPageState(pageNum);
-      if (!pageState) continue;
-      pageState.masks.forEach((m) => { m.userHidden = true; });
-      redrawOverlayForPage(pageNum);
-    }
-    await persistPageState();
+async function hideAllMasks() {
+  // 全隠し = 全てのカバーをつける
+  for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
+    const pageState = getPageState(pageNum);
+    if (!pageState) continue;
+    pageState.masks.forEach((m) => { m.userHidden = false; });
+    redrawOverlayForPage(pageNum);
   }
+  await persistPageState();
+}
 
   // ------------------------------
   // Resize
