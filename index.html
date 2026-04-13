@@ -11,7 +11,6 @@
   <link rel="manifest" href="./manifest.json" />
   <meta name="theme-color" content="#0f1115" />
 
-  <!-- iPad / iOS -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="PDF暗記" />
@@ -20,7 +19,6 @@
 </head>
 <body>
   <div id="app">
-    <!-- ホーム -->
     <section id="homeScreen" class="screen active">
       <header class="home-header">
         <h1>PDF暗記アプリ</h1>
@@ -50,7 +48,6 @@
       </section>
     </section>
 
-    <!-- ビューア -->
     <section id="viewerScreen" class="screen">
       <header class="viewer-header">
         <div class="viewer-header-row">
@@ -91,13 +88,10 @@
     </section>
   </div>
 
-  <!-- pdf.js を module として読み込む -->
-<script type="module">
-  import * as pdfjsLib from "/pdf-mask-app/pdf.mjs";
-  window.pdfjsLib = pdfjsLib;
-</script>
-
-  <!-- アプリ本体 -->
-  <script src="./app.js"></script>
+  <script type="module">
+    import * as pdfjsLib from "/pdf-mask-app/pdf.mjs";
+    window.pdfjsLib = pdfjsLib;
+    await import("/pdf-mask-app/app.js");
+  </script>
 </body>
 </html>

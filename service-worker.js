@@ -6,7 +6,7 @@ const APP_SHELL = [
   "./app.js",
   "./manifest.json",
   "./pdf.min.js",
-  "./pdf.worker.min.js"
+  "./pdf.worker.js"
 ];
 
 self.addEventListener("install", (event) => {

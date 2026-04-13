@@ -6,7 +6,7 @@
     alert("pdf.mjs が見つかりません。同じフォルダに配置してください。");
     return;
   }
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "./pdf.worker.mjs";
+ pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf-mask-app/pdf.worker.mjs";
 
   // ------------------------------
   // DOM
