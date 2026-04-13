@@ -22,9 +22,6 @@
   const pageInfo = document.getElementById("pageInfo");
   const modeLabel = document.getElementById("modeLabel");
 
-  const pdfCanvas = document.getElementById("pdfCanvas");
-  const overlayCanvas = document.getElementById("overlayCanvas");
-  const pdfStage = document.getElementById("pdfStage");
   const pdfStageWrap = document.getElementById("pdfStageWrap");
   const viewerBody = document.getElementById("viewerBody");
 
@@ -41,9 +38,6 @@
   const brushSizeValue = document.getElementById("brushSizeValue");
   const colorChips = document.getElementById("colorChips");
 
-  const pdfCtx = pdfCanvas.getContext("2d");
-  const overlayCtx = overlayCanvas.getContext("2d");
-
   // ------------------------------
   // App state
   // ------------------------------
@@ -58,10 +52,10 @@
     tool: "view", // view | line | rect | eraser
     rendering: false,
     resizeTimer: null,
-    currentViewport: null,
 
     // pointer interaction
     drawing: false,
+    drawingPage: null,
     startX: 0,
     startY: 0,
     activePointerId: null,
@@ -72,7 +66,13 @@
     brushColor: "rgba(0,0,0,0.96)",
 
     // current persistent doc state
-    docState: null
+    docState: null,
+
+    // rendered pages
+    pageViews: new Map(),
+    pagesContainer: null,
+
+    scrollRaf: null
   };
 
   // ------------------------------
@@ -181,14 +181,13 @@
     return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   }
 
-  function getCurrentPageState() {
+  function getPageState(pageNum) {
     if (!state.docState) return null;
-    if (!state.docState.pages[String(state.currentPage)]) {
-      state.docState.pages[String(state.currentPage)] = {
-        masks: []
-      };
+    const key = String(pageNum);
+    if (!state.docState.pages[key]) {
+      state.docState.pages[key] = { masks: [] };
     }
-    return state.docState.pages[String(state.currentPage)];
+    return state.docState.pages[key];
   }
 
   function createEmptyDocState({ id, name, size, lastModified, pdfBlob }) {
@@ -205,51 +204,36 @@
     };
   }
 
-  function getDisplaySize() {
-    return {
-      width: overlayCanvas.width,
-      height: overlayCanvas.height
-    };
-  }
-
   function isMaskVisible(mask) {
     return !mask.userHidden;
   }
 
-  function getPointerPos(e) {
+  function getPointerPos(e, overlayCanvas) {
     const rect = overlayCanvas.getBoundingClientRect();
     const x = clamp(e.clientX - rect.left, 0, rect.width);
     const y = clamp(e.clientY - rect.top, 0, rect.height);
     return { x, y, rect };
   }
 
-  function toRatioPoint(px, py) {
-    const { width, height } = getDisplaySize();
+  function toRatioPoint(px, py, overlayCanvas) {
     return {
-      x: width ? px / width : 0,
-      y: height ? py / height : 0
+      x: overlayCanvas.width ? px / overlayCanvas.width : 0,
+      y: overlayCanvas.height ? py / overlayCanvas.height : 0
     };
   }
 
-  function fromRatioPoint(rx, ry) {
-    const { width, height } = getDisplaySize();
+  function fromRatioPoint(rx, ry, overlayCanvas) {
     return {
-      x: rx * width,
-      y: ry * height
+      x: rx * overlayCanvas.width,
+      y: ry * overlayCanvas.height
     };
   }
 
   function setTouchMode(disableScroll) {
     if (disableScroll) {
       viewerBody.classList.add("no-scroll");
-      pdfStage.classList.add("no-scroll");
-      overlayCanvas.classList.add("no-scroll");
-      overlayCanvas.style.touchAction = "none";
     } else {
       viewerBody.classList.remove("no-scroll");
-      pdfStage.classList.remove("no-scroll");
-      overlayCanvas.classList.remove("no-scroll");
-      overlayCanvas.style.touchAction = "auto";
     }
   }
 
@@ -271,6 +255,18 @@
         chip.classList.toggle("active", chip.dataset.color === state.brushColor);
       });
     }
+  }
+
+  function getPageView(pageNum) {
+    return state.pageViews.get(pageNum) || null;
+  }
+
+  function clearPageViews() {
+    state.pageViews.clear();
+    if (pdfStageWrap) {
+      pdfStageWrap.innerHTML = "";
+    }
+    state.pagesContainer = null;
   }
 
   // ------------------------------
@@ -389,6 +385,7 @@
 
   async function openDocState(doc) {
     cleanupObjectURL();
+    clearPageViews();
 
     state.docState = doc;
     state.currentPdfId = doc.id;
@@ -415,7 +412,12 @@
     showViewer();
     updateHeader();
     updateToolUI();
-    await renderCurrentPage();
+    await renderAllPages();
+
+    requestAnimationFrame(() => {
+      scrollToPage(state.currentPage, false);
+      updateCurrentPageFromScroll();
+    });
   }
 
   function cleanupObjectURL() {
@@ -441,101 +443,162 @@
   }
 
   // ------------------------------
-  // Render PDF page
+  // Render all pages
   // ------------------------------
-  async function renderCurrentPage() {
+  function createPagesContainer() {
+    const container = document.createElement("div");
+    container.className = "pdf-pages-stack";
+    return container;
+  }
+
+  function createPageStage(pageNum) {
+    const stage = document.createElement("div");
+    stage.className = "pdf-stage pdf-page-stage";
+    stage.dataset.page = String(pageNum);
+
+    const pdfCanvas = document.createElement("canvas");
+    pdfCanvas.className = "pdf-page-canvas";
+
+    const overlayCanvas = document.createElement("canvas");
+    overlayCanvas.className = "overlay-page-canvas";
+
+    stage.append(pdfCanvas, overlayCanvas);
+
+    const pageView = {
+      pageNum,
+      stage,
+      pdfCanvas,
+      overlayCanvas,
+      pdfCtx: pdfCanvas.getContext("2d"),
+      overlayCtx: overlayCanvas.getContext("2d"),
+      width: 0,
+      height: 0
+    };
+
+    overlayCanvas.addEventListener("pointerdown", (e) => onPointerDown(e, pageNum), { passive: false });
+    overlayCanvas.addEventListener("pointermove", (e) => onPointerMove(e, pageNum), { passive: false });
+    overlayCanvas.addEventListener("pointerup", (e) => onPointerUp(e, pageNum), { passive: false });
+    overlayCanvas.addEventListener("pointercancel", () => onPointerCancel(), { passive: false });
+
+    return pageView;
+  }
+
+  async function renderAllPages() {
     if (!state.pdfDoc || state.rendering) return;
 
     state.rendering = true;
-    const page = await state.pdfDoc.getPage(state.currentPage);
+    clearPageViews();
+
+    state.pagesContainer = createPagesContainer();
+    pdfStageWrap.appendChild(state.pagesContainer);
+
+    for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
+      const pageView = createPageStage(pageNum);
+      state.pageViews.set(pageNum, pageView);
+      state.pagesContainer.appendChild(pageView.stage);
+      await renderPdfPage(pageNum);
+    }
+
+    updateHeader();
+    state.rendering = false;
+  }
+
+  async function renderPdfPage(pageNum) {
+    const page = await state.pdfDoc.getPage(pageNum);
+    const pageView = getPageView(pageNum);
+    if (!pageView) return;
 
     const unscaled = page.getViewport({ scale: 1 });
     const containerWidth = Math.max(320, pdfStageWrap.clientWidth - 28);
     const scale = containerWidth / unscaled.width;
     const viewport = page.getViewport({ scale });
 
-    state.currentViewport = viewport;
+    pageView.width = Math.floor(viewport.width);
+    pageView.height = Math.floor(viewport.height);
 
-    pdfCanvas.width = Math.floor(viewport.width);
-    pdfCanvas.height = Math.floor(viewport.height);
-    pdfCanvas.style.width = `${viewport.width}px`;
-    pdfCanvas.style.height = `${viewport.height}px`;
+    pageView.pdfCanvas.width = pageView.width;
+    pageView.pdfCanvas.height = pageView.height;
+    pageView.pdfCanvas.style.width = `${viewport.width}px`;
+    pageView.pdfCanvas.style.height = `${viewport.height}px`;
 
-    overlayCanvas.width = Math.floor(viewport.width);
-    overlayCanvas.height = Math.floor(viewport.height);
-    overlayCanvas.style.width = `${viewport.width}px`;
-    overlayCanvas.style.height = `${viewport.height}px`;
+    pageView.overlayCanvas.width = pageView.width;
+    pageView.overlayCanvas.height = pageView.height;
+    pageView.overlayCanvas.style.width = `${viewport.width}px`;
+    pageView.overlayCanvas.style.height = `${viewport.height}px`;
 
-    pdfStage.style.width = `${viewport.width}px`;
-    pdfStage.style.height = `${viewport.height}px`;
+    pageView.stage.style.width = `${viewport.width}px`;
+    pageView.stage.style.height = `${viewport.height}px`;
 
-    const renderCtx = {
-      canvasContext: pdfCtx,
+    pageView.pdfCtx.clearRect(0, 0, pageView.pdfCanvas.width, pageView.pdfCanvas.height);
+    await page.render({
+      canvasContext: pageView.pdfCtx,
       viewport
-    };
+    }).promise;
 
-    pdfCtx.clearRect(0, 0, pdfCanvas.width, pdfCanvas.height);
-    await page.render(renderCtx).promise;
-
-    updateHeader();
-    redrawOverlay();
-
-    state.rendering = false;
+    redrawOverlayForPage(pageNum);
   }
 
-  function redrawOverlay() {
-    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  function redrawAllOverlays() {
+    for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
+      redrawOverlayForPage(pageNum);
+    }
+  }
 
-    const pageState = getCurrentPageState();
-    if (!pageState) return;
+  function redrawOverlayForPage(pageNum) {
+    const pageView = getPageView(pageNum);
+    const pageState = getPageState(pageNum);
+    if (!pageView || !pageState) return;
+
+    const ctx = pageView.overlayCtx;
+    ctx.clearRect(0, 0, pageView.overlayCanvas.width, pageView.overlayCanvas.height);
 
     for (const mask of pageState.masks) {
       if (!isMaskVisible(mask)) continue;
-      drawMask(mask, false);
+      drawMask(ctx, pageView.overlayCanvas, mask, false);
     }
 
-    if (state.currentDraft) {
-      drawMask(state.currentDraft, true);
+    if (state.currentDraft && state.drawingPage === pageNum) {
+      drawMask(ctx, pageView.overlayCanvas, state.currentDraft, true);
     }
   }
 
-  function drawMask(mask, isDraft) {
+  function drawMask(ctx, overlayCanvas, mask, isDraft) {
     const color = mask.color || "rgba(0,0,0,0.96)";
 
-    overlayCtx.save();
-    overlayCtx.fillStyle = color;
-    overlayCtx.strokeStyle = color;
-    overlayCtx.lineCap = "round";
-    overlayCtx.lineJoin = "round";
-    overlayCtx.globalAlpha = isDraft ? 0.88 : 1;
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.globalAlpha = isDraft ? 0.88 : 1;
 
     if (mask.type === "rect") {
-      const p = fromRatioPoint(mask.x, mask.y);
-      const size = fromRatioPoint(mask.w, mask.h);
-      overlayCtx.fillRect(p.x, p.y, size.x, size.y);
+      const p = fromRatioPoint(mask.x, mask.y, overlayCanvas);
+      const size = fromRatioPoint(mask.w, mask.h, overlayCanvas);
+      ctx.fillRect(p.x, p.y, size.x, size.y);
     }
 
     if (mask.type === "line") {
       if (!mask.points || mask.points.length < 2) {
-        overlayCtx.restore();
+        ctx.restore();
         return;
       }
 
       const widthPx = (mask.widthRatio || 0.02) * overlayCanvas.width;
-      overlayCtx.lineWidth = Math.max(4, widthPx);
-      overlayCtx.beginPath();
+      ctx.lineWidth = Math.max(4, widthPx);
+      ctx.beginPath();
 
-      const first = fromRatioPoint(mask.points[0].x, mask.points[0].y);
-      overlayCtx.moveTo(first.x, first.y);
+      const first = fromRatioPoint(mask.points[0].x, mask.points[0].y, overlayCanvas);
+      ctx.moveTo(first.x, first.y);
 
       for (let i = 1; i < mask.points.length; i++) {
-        const p = fromRatioPoint(mask.points[i].x, mask.points[i].y);
-        overlayCtx.lineTo(p.x, p.y);
+        const p = fromRatioPoint(mask.points[i].x, mask.points[i].y, overlayCanvas);
+        ctx.lineTo(p.x, p.y);
       }
-      overlayCtx.stroke();
+      ctx.stroke();
     }
 
-    overlayCtx.restore();
+    ctx.restore();
   }
 
   // ------------------------------
@@ -570,15 +633,16 @@
     state.tool = tool;
     state.currentDraft = null;
     state.drawing = false;
+    state.drawingPage = null;
     updateToolUI();
-    redrawOverlay();
+    redrawAllOverlays();
   }
 
   // ------------------------------
   // Mask creation / hit testing
   // ------------------------------
-  function createLineDraft(startX, startY) {
-    const p = toRatioPoint(startX, startY);
+  function createLineDraft(startX, startY, overlayCanvas) {
+    const p = toRatioPoint(startX, startY, overlayCanvas);
     return {
       id: generateId("mask"),
       type: "line",
@@ -589,8 +653,8 @@
     };
   }
 
-  function createRectDraft(startX, startY) {
-    const p = toRatioPoint(startX, startY);
+  function createRectDraft(startX, startY, overlayCanvas) {
+    const p = toRatioPoint(startX, startY, overlayCanvas);
     return {
       id: generateId("mask"),
       type: "rect",
@@ -603,8 +667,8 @@
     };
   }
 
-  function finalizeDraft() {
-    const pageState = getCurrentPageState();
+  function finalizeDraft(pageNum) {
+    const pageState = getPageState(pageNum);
     if (!pageState || !state.currentDraft) return;
 
     const draft = state.currentDraft;
@@ -612,7 +676,7 @@
     if (draft.type === "line") {
       if (!draft.points || draft.points.length < 2) {
         state.currentDraft = null;
-        redrawOverlay();
+        redrawOverlayForPage(pageNum);
         return;
       }
     }
@@ -620,7 +684,7 @@
     if (draft.type === "rect") {
       if (Math.abs(draft.w) < 0.002 || Math.abs(draft.h) < 0.002) {
         state.currentDraft = null;
-        redrawOverlay();
+        redrawOverlayForPage(pageNum);
         return;
       }
       normalizeRectDraft(draft);
@@ -628,7 +692,8 @@
 
     pageState.masks.push(draft);
     state.currentDraft = null;
-    redrawOverlay();
+    state.drawingPage = null;
+    redrawOverlayForPage(pageNum);
     persistPageState();
   }
 
@@ -647,9 +712,9 @@
     rect.h = clamp(rect.h, 0, 1);
   }
 
-  function hitTestRect(mask, px, py) {
-    const pos = fromRatioPoint(mask.x, mask.y);
-    const size = fromRatioPoint(mask.w, mask.h);
+  function hitTestRect(mask, px, py, overlayCanvas) {
+    const pos = fromRatioPoint(mask.x, mask.y, overlayCanvas);
+    const size = fromRatioPoint(mask.w, mask.h, overlayCanvas);
     return px >= pos.x && px <= pos.x + size.x && py >= pos.y && py <= pos.y + size.y;
   }
 
@@ -664,31 +729,32 @@
     return Math.hypot(px - cx, py - cy);
   }
 
-  function hitTestLine(mask, px, py) {
+  function hitTestLine(mask, px, py, overlayCanvas) {
     if (!mask.points || mask.points.length < 2) return false;
     const widthPx = Math.max(8, (mask.widthRatio || 0.02) * overlayCanvas.width);
     const threshold = widthPx * 0.7 + 8;
 
     for (let i = 1; i < mask.points.length; i++) {
-      const a = fromRatioPoint(mask.points[i - 1].x, mask.points[i - 1].y);
-      const b = fromRatioPoint(mask.points[i].x, mask.points[i].y);
+      const a = fromRatioPoint(mask.points[i - 1].x, mask.points[i - 1].y, overlayCanvas);
+      const b = fromRatioPoint(mask.points[i].x, mask.points[i].y, overlayCanvas);
       const d = distancePointToSegment(px, py, a.x, a.y, b.x, b.y);
       if (d <= threshold) return true;
     }
     return false;
   }
 
-  function findTopMaskAt(px, py, includeHidden = true) {
-    const pageState = getCurrentPageState();
-    if (!pageState) return null;
+  function findTopMaskAt(pageNum, px, py, includeHidden = true) {
+    const pageState = getPageState(pageNum);
+    const pageView = getPageView(pageNum);
+    if (!pageState || !pageView) return null;
 
     for (let i = pageState.masks.length - 1; i >= 0; i--) {
       const mask = pageState.masks[i];
       if (!includeHidden && !isMaskVisible(mask)) continue;
 
       const hit = mask.type === "rect"
-        ? hitTestRect(mask, px, py)
-        : hitTestLine(mask, px, py);
+        ? hitTestRect(mask, px, py, pageView.overlayCanvas)
+        : hitTestLine(mask, px, py, pageView.overlayCanvas);
 
       if (hit) return { mask, index: i };
     }
@@ -698,18 +764,21 @@
   // ------------------------------
   // Pointer events
   // ------------------------------
-  function onPointerDown(e) {
+  function onPointerDown(e, pageNum) {
     if (!state.pdfDoc) return;
     if (e.pointerType === "mouse" && e.button !== 0) return;
 
-    const pos = getPointerPos(e);
+    const pageView = getPageView(pageNum);
+    if (!pageView) return;
+
+    const pos = getPointerPos(e, pageView.overlayCanvas);
     state.activePointerId = e.pointerId;
 
     if (state.tool === "view") {
-      const hit = findTopMaskAt(pos.x, pos.y, true);
+      const hit = findTopMaskAt(pageNum, pos.x, pos.y, true);
       if (hit) {
         hit.mask.userHidden = !hit.mask.userHidden;
-        redrawOverlay();
+        redrawOverlayForPage(pageNum);
         persistPageState();
         e.preventDefault();
       }
@@ -722,11 +791,11 @@
     }
 
     if (state.tool === "eraser") {
-      const hit = findTopMaskAt(pos.x, pos.y, true);
+      const hit = findTopMaskAt(pageNum, pos.x, pos.y, true);
       if (hit) {
-        const pageState = getCurrentPageState();
+        const pageState = getPageState(pageNum);
         pageState.masks.splice(hit.index, 1);
-        redrawOverlay();
+        redrawOverlayForPage(pageNum);
         persistPageState();
       }
       e.preventDefault();
@@ -735,28 +804,33 @@
 
     if (state.tool === "line" || state.tool === "rect") {
       state.drawing = true;
+      state.drawingPage = pageNum;
       state.startX = pos.x;
       state.startY = pos.y;
       state.currentDraft = state.tool === "line"
-        ? createLineDraft(pos.x, pos.y)
-        : createRectDraft(pos.x, pos.y);
+        ? createLineDraft(pos.x, pos.y, pageView.overlayCanvas)
+        : createRectDraft(pos.x, pos.y, pageView.overlayCanvas);
 
-      overlayCanvas.setPointerCapture(e.pointerId);
+      pageView.overlayCanvas.setPointerCapture(e.pointerId);
       setTouchMode(true);
-      redrawOverlay();
+      redrawOverlayForPage(pageNum);
       e.preventDefault();
     }
   }
 
-  function onPointerMove(e) {
+  function onPointerMove(e, pageNum) {
     if (state.activePointerId !== null && e.pointerId !== state.activePointerId) return;
     if (!state.drawing || !state.currentDraft) return;
     if (!isPenEvent(e)) return;
+    if (state.drawingPage !== pageNum) return;
 
-    const pos = getPointerPos(e);
+    const pageView = getPageView(pageNum);
+    if (!pageView) return;
+
+    const pos = getPointerPos(e, pageView.overlayCanvas);
 
     if (state.currentDraft.type === "line") {
-      const p = toRatioPoint(pos.x, pos.y);
+      const p = toRatioPoint(pos.x, pos.y, pageView.overlayCanvas);
       const points = state.currentDraft.points;
       const last = points[points.length - 1];
       const dx = Math.abs((last?.x ?? 0) - p.x);
@@ -768,24 +842,24 @@
     }
 
     if (state.currentDraft.type === "rect") {
-      const start = toRatioPoint(state.startX, state.startY);
-      const current = toRatioPoint(pos.x, pos.y);
+      const start = toRatioPoint(state.startX, state.startY, pageView.overlayCanvas);
+      const current = toRatioPoint(pos.x, pos.y, pageView.overlayCanvas);
       state.currentDraft.x = start.x;
       state.currentDraft.y = start.y;
       state.currentDraft.w = current.x - start.x;
       state.currentDraft.h = current.y - start.y;
     }
 
-    redrawOverlay();
+    redrawOverlayForPage(pageNum);
     e.preventDefault();
   }
 
-  function onPointerUp(e) {
+  function onPointerUp(e, pageNum) {
     if (state.activePointerId !== null && e.pointerId !== state.activePointerId) return;
 
-    if (state.drawing) {
+    if (state.drawing && state.drawingPage === pageNum) {
       state.drawing = false;
-      finalizeDraft();
+      finalizeDraft(pageNum);
       setTouchMode(false);
     }
 
@@ -796,37 +870,84 @@
     state.drawing = false;
     state.currentDraft = null;
     state.activePointerId = null;
+    state.drawingPage = null;
     setTouchMode(false);
-    redrawOverlay();
+    redrawAllOverlays();
   }
 
   // ------------------------------
-  // Page actions
+  // Page navigation / scroll
   // ------------------------------
+  function scrollToPage(pageNum, smooth = true) {
+    const pageView = getPageView(pageNum);
+    if (!pageView) return;
+
+    pageView.stage.scrollIntoView({
+      behavior: smooth ? "smooth" : "auto",
+      block: "start"
+    });
+  }
+
+  function updateCurrentPageFromScroll() {
+    if (!state.pageViews.size) return;
+
+    const viewerRect = viewerBody.getBoundingClientRect();
+    const targetY = viewerRect.top + viewerRect.height * 0.35;
+
+    let bestPage = state.currentPage;
+    let bestDistance = Infinity;
+
+    for (const [pageNum, pageView] of state.pageViews.entries()) {
+      const rect = pageView.stage.getBoundingClientRect();
+      const centerY = rect.top + rect.height / 2;
+      const distance = Math.abs(centerY - targetY);
+
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestPage = pageNum;
+      }
+    }
+
+    if (bestPage !== state.currentPage) {
+      state.currentPage = bestPage;
+      updateHeader();
+      persistDocState();
+    }
+  }
+
+  function onViewerScroll() {
+    if (state.scrollRaf) cancelAnimationFrame(state.scrollRaf);
+    state.scrollRaf = requestAnimationFrame(() => {
+      updateCurrentPageFromScroll();
+    });
+  }
+
   async function goToPage(pageNum) {
     if (!state.pdfDoc) return;
     const next = clamp(pageNum, 1, state.totalPages);
-    if (next === state.currentPage) return;
     state.currentPage = next;
     updateHeader();
-    redrawOverlay();
     await persistDocState();
-    await renderCurrentPage();
+    scrollToPage(next, true);
   }
 
   async function showAllMasks() {
-    const pageState = getCurrentPageState();
-    if (!pageState) return;
-    pageState.masks.forEach((m) => { m.userHidden = false; });
-    redrawOverlay();
+    for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
+      const pageState = getPageState(pageNum);
+      if (!pageState) continue;
+      pageState.masks.forEach((m) => { m.userHidden = false; });
+      redrawOverlayForPage(pageNum);
+    }
     await persistPageState();
   }
 
   async function hideAllMasks() {
-    const pageState = getCurrentPageState();
-    if (!pageState) return;
-    pageState.masks.forEach((m) => { m.userHidden = true; });
-    redrawOverlay();
+    for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
+      const pageState = getPageState(pageNum);
+      if (!pageState) continue;
+      pageState.masks.forEach((m) => { m.userHidden = true; });
+      redrawOverlayForPage(pageNum);
+    }
     await persistPageState();
   }
 
@@ -835,9 +956,12 @@
   // ------------------------------
   function handleResize() {
     clearTimeout(state.resizeTimer);
-    state.resizeTimer = setTimeout(() => {
+    state.resizeTimer = setTimeout(async () => {
       if (viewerScreen.classList.contains("active") && state.pdfDoc) {
-        renderCurrentPage();
+        const keepPage = state.currentPage;
+        await renderAllPages();
+        scrollToPage(keepPage, false);
+        updateCurrentPageFromScroll();
       }
     }, 120);
   }
@@ -873,8 +997,12 @@
   showAllBtn.addEventListener("click", showAllMasks);
   hideAllBtn.addEventListener("click", hideAllMasks);
 
-  prevPageBtn.addEventListener("click", () => goToPage(state.currentPage - 1));
-  nextPageBtn.addEventListener("click", () => goToPage(state.currentPage + 1));
+  if (prevPageBtn) {
+    prevPageBtn.addEventListener("click", () => goToPage(state.currentPage - 1));
+  }
+  if (nextPageBtn) {
+    nextPageBtn.addEventListener("click", () => goToPage(state.currentPage + 1));
+  }
 
   if (brushSizeInput) {
     brushSizeInput.addEventListener("input", (e) => {
@@ -892,10 +1020,7 @@
     });
   }
 
-  overlayCanvas.addEventListener("pointerdown", onPointerDown, { passive: false });
-  overlayCanvas.addEventListener("pointermove", onPointerMove, { passive: false });
-  overlayCanvas.addEventListener("pointerup", onPointerUp, { passive: false });
-  overlayCanvas.addEventListener("pointercancel", onPointerCancel, { passive: false });
+  viewerBody.addEventListener("scroll", onViewerScroll, { passive: true });
 
   window.addEventListener("resize", handleResize);
   window.addEventListener("orientationchange", handleResize);
