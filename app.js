@@ -1,12 +1,11 @@
 (() => {
   "use strict";
 
-  // pdf.js local worker
   if (!window.pdfjsLib) {
     alert("pdf.mjs が見つかりません。同じフォルダに配置してください。");
     return;
   }
- pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf-mask-app/pdf.worker.mjs";
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "/pdf-mask-app/pdf.worker.mjs";
 
   // ------------------------------
   // DOM
@@ -22,24 +21,25 @@
   const docTitle = document.getElementById("docTitle");
   const pageInfo = document.getElementById("pageInfo");
   const modeLabel = document.getElementById("modeLabel");
-  const guideModeLabel = document.getElementById("guideModeLabel");
 
   const pdfCanvas = document.getElementById("pdfCanvas");
   const overlayCanvas = document.getElementById("overlayCanvas");
   const pdfStage = document.getElementById("pdfStage");
   const pdfStageWrap = document.getElementById("pdfStageWrap");
   const viewerBody = document.getElementById("viewerBody");
-  const guideLine = document.getElementById("guideLine");
 
   const viewModeBtn = document.getElementById("viewModeBtn");
   const drawLineBtn = document.getElementById("drawLineBtn");
   const drawRectBtn = document.getElementById("drawRectBtn");
   const eraserBtn = document.getElementById("eraserBtn");
-  const guideModeBtn = document.getElementById("guideModeBtn");
   const showAllBtn = document.getElementById("showAllBtn");
   const hideAllBtn = document.getElementById("hideAllBtn");
   const prevPageBtn = document.getElementById("prevPageBtn");
   const nextPageBtn = document.getElementById("nextPageBtn");
+
+  const brushSizeInput = document.getElementById("brushSizeInput");
+  const brushSizeValue = document.getElementById("brushSizeValue");
+  const colorChips = document.getElementById("colorChips");
 
   const pdfCtx = pdfCanvas.getContext("2d");
   const overlayCtx = overlayCanvas.getContext("2d");
@@ -62,20 +62,18 @@
 
     // pointer interaction
     drawing: false,
-    dragGuide: false,
     startX: 0,
     startY: 0,
     activePointerId: null,
     currentDraft: null,
-    lastTapMaskId: null,
+
+    // brush
+    brushWidth: 18,
+    brushColor: "rgba(0,0,0,0.96)",
 
     // current persistent doc state
     docState: null
   };
-
-  const GUIDE_MODES = ["none", "hideBelow", "hideAbove"];
-  const MASK_LINE_WIDTH = 18;
-  const GUIDE_HIT_PX = 22;
 
   // ------------------------------
   // IndexedDB
@@ -187,9 +185,7 @@
     if (!state.docState) return null;
     if (!state.docState.pages[String(state.currentPage)]) {
       state.docState.pages[String(state.currentPage)] = {
-        masks: [],
-        guidelineY: 0.5,
-        guidelineMode: "none"
+        masks: []
       };
     }
     return state.docState.pages[String(state.currentPage)];
@@ -216,32 +212,8 @@
     };
   }
 
-  function getMaskCenterRatioY(mask) {
-    if (mask.type === "rect") {
-      return mask.y + mask.h / 2;
-    }
-    if (mask.type === "line") {
-      if (!mask.points.length) return 0;
-      let sum = 0;
-      for (const p of mask.points) sum += p.y;
-      return sum / mask.points.length;
-    }
-    return 0;
-  }
-
-  function passesGuideFilter(mask, pageState) {
-    const centerY = getMaskCenterRatioY(mask);
-    const lineY = pageState.guidelineY ?? 0.5;
-    const guideMode = pageState.guidelineMode ?? "none";
-
-    if (guideMode === "hideBelow" && centerY > lineY) return false;
-    if (guideMode === "hideAbove" && centerY < lineY) return false;
-    return true;
-  }
-
-  function isMaskVisible(mask, pageState) {
-    if (mask.userHidden) return false;
-    return passesGuideFilter(mask, pageState);
+  function isMaskVisible(mask) {
+    return !mask.userHidden;
   }
 
   function getPointerPos(e) {
@@ -284,6 +256,21 @@
   function downloadMeta(doc) {
     const pagesCount = doc.pages ? Object.keys(doc.pages).length : 0;
     return `${formatDate(doc.updatedAt)} ・ ${doc.size.toLocaleString()} bytes ・ ${pagesCount}ページ保存`;
+  }
+
+  function isPenEvent(e) {
+    return e.pointerType === "pen";
+  }
+
+  function updateBrushUI() {
+    if (brushSizeValue) brushSizeValue.textContent = String(state.brushWidth);
+
+    if (colorChips) {
+      const chips = colorChips.querySelectorAll(".color-chip");
+      chips.forEach((chip) => {
+        chip.classList.toggle("active", chip.dataset.color === state.brushColor);
+      });
+    }
   }
 
   // ------------------------------
@@ -491,7 +478,6 @@
     await page.render(renderCtx).promise;
 
     updateHeader();
-    updateGuideLineUI();
     redrawOverlay();
 
     state.rendering = false;
@@ -503,22 +489,22 @@
     const pageState = getCurrentPageState();
     if (!pageState) return;
 
-    // draw masks
     for (const mask of pageState.masks) {
-      if (!isMaskVisible(mask, pageState)) continue;
+      if (!isMaskVisible(mask)) continue;
       drawMask(mask, false);
     }
 
-    // draw current draft
     if (state.currentDraft) {
       drawMask(state.currentDraft, true);
     }
   }
 
   function drawMask(mask, isDraft) {
+    const color = mask.color || "rgba(0,0,0,0.96)";
+
     overlayCtx.save();
-    overlayCtx.fillStyle = "rgba(0,0,0,0.96)";
-    overlayCtx.strokeStyle = "rgba(0,0,0,0.96)";
+    overlayCtx.fillStyle = color;
+    overlayCtx.strokeStyle = color;
     overlayCtx.lineCap = "round";
     overlayCtx.lineJoin = "round";
     overlayCtx.globalAlpha = isDraft ? 0.88 : 1;
@@ -536,7 +522,7 @@
       }
 
       const widthPx = (mask.widthRatio || 0.02) * overlayCanvas.width;
-      overlayCtx.lineWidth = Math.max(10, widthPx);
+      overlayCtx.lineWidth = Math.max(4, widthPx);
       overlayCtx.beginPath();
 
       const first = fromRatioPoint(mask.points[0].x, mask.points[0].y);
@@ -566,10 +552,6 @@
       eraser: "消しゴム"
     };
     modeLabel.textContent = modeMap[state.tool] || "閲覧";
-
-    const pageState = getCurrentPageState();
-    const guideMode = pageState?.guidelineMode || "none";
-    guideModeLabel.textContent = `基準線:${guideMode}`;
   }
 
   function updateToolUI() {
@@ -579,36 +561,15 @@
     if (state.tool === "rect") drawRectBtn.classList.add("active");
     if (state.tool === "eraser") eraserBtn.classList.add("active");
 
-    const pageState = getCurrentPageState();
-    const guideMode = pageState?.guidelineMode || "none";
-    guideModeBtn.classList.remove("active", "warn");
-    if (guideMode !== "none") {
-      guideModeBtn.classList.add("active");
-      guideModeBtn.classList.add("warn");
-    }
-
-    setTouchMode(state.tool !== "view" || state.dragGuide || state.drawing);
+    setTouchMode(state.tool !== "view" && state.drawing);
     updateHeader();
-  }
-
-  function updateGuideLineUI() {
-    const pageState = getCurrentPageState();
-    if (!pageState) return;
-
-    const yRatio = clamp(pageState.guidelineY ?? 0.5, 0, 1);
-    const yPx = yRatio * overlayCanvas.height;
-    guideLine.style.top = `${yPx}px`;
-
-    const guideMode = pageState.guidelineMode || "none";
-    guideLine.style.opacity = guideMode === "none" ? "0.55" : "1";
-    guideLine.style.borderTopStyle = guideMode === "none" ? "dashed" : "solid";
+    updateBrushUI();
   }
 
   function setTool(tool) {
     state.tool = tool;
     state.currentDraft = null;
     state.drawing = false;
-    state.dragGuide = false;
     updateToolUI();
     redrawOverlay();
   }
@@ -621,7 +582,8 @@
     return {
       id: generateId("mask"),
       type: "line",
-      widthRatio: MASK_LINE_WIDTH / Math.max(overlayCanvas.width, 1),
+      widthRatio: state.brushWidth / Math.max(overlayCanvas.width, 1),
+      color: state.brushColor,
       userHidden: false,
       points: [p]
     };
@@ -636,6 +598,7 @@
       y: p.y,
       w: 0,
       h: 0,
+      color: state.brushColor,
       userHidden: false
     };
   }
@@ -703,7 +666,7 @@
 
   function hitTestLine(mask, px, py) {
     if (!mask.points || mask.points.length < 2) return false;
-    const widthPx = Math.max(12, (mask.widthRatio || 0.02) * overlayCanvas.width);
+    const widthPx = Math.max(8, (mask.widthRatio || 0.02) * overlayCanvas.width);
     const threshold = widthPx * 0.7 + 8;
 
     for (let i = 1; i < mask.points.length; i++) {
@@ -721,7 +684,7 @@
 
     for (let i = pageState.masks.length - 1; i >= 0; i--) {
       const mask = pageState.masks[i];
-      if (!includeHidden && !isMaskVisible(mask, pageState)) continue;
+      if (!includeHidden && !isMaskVisible(mask)) continue;
 
       const hit = mask.type === "rect"
         ? hitTestRect(mask, px, py)
@@ -730,39 +693,6 @@
       if (hit) return { mask, index: i };
     }
     return null;
-  }
-
-  // ------------------------------
-  // Guide line
-  // ------------------------------
-  function isNearGuideLine(py) {
-    const pageState = getCurrentPageState();
-    if (!pageState) return false;
-    const guideY = (pageState.guidelineY ?? 0.5) * overlayCanvas.height;
-    return Math.abs(py - guideY) <= GUIDE_HIT_PX;
-  }
-
-  async function cycleGuideMode() {
-    const pageState = getCurrentPageState();
-    if (!pageState) return;
-
-    const current = pageState.guidelineMode || "none";
-    const nextIndex = (GUIDE_MODES.indexOf(current) + 1) % GUIDE_MODES.length;
-    pageState.guidelineMode = GUIDE_MODES[nextIndex];
-
-    updateGuideLineUI();
-    updateToolUI();
-    redrawOverlay();
-    await persistPageState();
-  }
-
-  async function setGuideLineByY(pxY) {
-    const pageState = getCurrentPageState();
-    if (!pageState) return;
-    pageState.guidelineY = clamp(pxY / overlayCanvas.height, 0, 1);
-    updateGuideLineUI();
-    redrawOverlay();
-    await persistPageState();
   }
 
   // ------------------------------
@@ -776,14 +706,6 @@
     state.activePointerId = e.pointerId;
 
     if (state.tool === "view") {
-      if (isNearGuideLine(pos.y)) {
-        state.dragGuide = true;
-        setTouchMode(true);
-        overlayCanvas.setPointerCapture(e.pointerId);
-        e.preventDefault();
-        return;
-      }
-
       const hit = findTopMaskAt(pos.x, pos.y, true);
       if (hit) {
         hit.mask.userHidden = !hit.mask.userHidden;
@@ -791,6 +713,11 @@
         persistPageState();
         e.preventDefault();
       }
+      return;
+    }
+
+    // 描画・消しゴムは Apple Pencil のみ
+    if (!isPenEvent(e)) {
       return;
     }
 
@@ -823,15 +750,10 @@
 
   function onPointerMove(e) {
     if (state.activePointerId !== null && e.pointerId !== state.activePointerId) return;
-    const pos = getPointerPos(e);
-
-    if (state.dragGuide) {
-      setGuideLineByY(pos.y);
-      e.preventDefault();
-      return;
-    }
-
     if (!state.drawing || !state.currentDraft) return;
+    if (!isPenEvent(e)) return;
+
+    const pos = getPointerPos(e);
 
     if (state.currentDraft.type === "line") {
       const p = toRatioPoint(pos.x, pos.y);
@@ -840,7 +762,6 @@
       const dx = Math.abs((last?.x ?? 0) - p.x);
       const dy = Math.abs((last?.y ?? 0) - p.y);
 
-      // 少し間引いて軽量化
       if (dx + dy > 0.0025) {
         points.push(p);
       }
@@ -862,13 +783,6 @@
   function onPointerUp(e) {
     if (state.activePointerId !== null && e.pointerId !== state.activePointerId) return;
 
-    if (state.dragGuide) {
-      state.dragGuide = false;
-      setTouchMode(false);
-      persistPageState();
-      return;
-    }
-
     if (state.drawing) {
       state.drawing = false;
       finalizeDraft();
@@ -879,7 +793,6 @@
   }
 
   function onPointerCancel() {
-    state.dragGuide = false;
     state.drawing = false;
     state.currentDraft = null;
     state.activePointerId = null;
@@ -896,7 +809,6 @@
     if (next === state.currentPage) return;
     state.currentPage = next;
     updateHeader();
-    updateGuideLineUI();
     redrawOverlay();
     await persistDocState();
     await renderCurrentPage();
@@ -958,12 +870,27 @@
   drawRectBtn.addEventListener("click", () => setTool("rect"));
   eraserBtn.addEventListener("click", () => setTool("eraser"));
 
-  guideModeBtn.addEventListener("click", cycleGuideMode);
   showAllBtn.addEventListener("click", showAllMasks);
   hideAllBtn.addEventListener("click", hideAllMasks);
 
   prevPageBtn.addEventListener("click", () => goToPage(state.currentPage - 1));
   nextPageBtn.addEventListener("click", () => goToPage(state.currentPage + 1));
+
+  if (brushSizeInput) {
+    brushSizeInput.addEventListener("input", (e) => {
+      state.brushWidth = Number(e.target.value || 18);
+      updateBrushUI();
+    });
+  }
+
+  if (colorChips) {
+    colorChips.addEventListener("click", (e) => {
+      const chip = e.target.closest(".color-chip");
+      if (!chip) return;
+      state.brushColor = chip.dataset.color || state.brushColor;
+      updateBrushUI();
+    });
+  }
 
   overlayCanvas.addEventListener("pointerdown", onPointerDown, { passive: false });
   overlayCanvas.addEventListener("pointermove", onPointerMove, { passive: false });
@@ -985,13 +912,13 @@
   async function init() {
     await registerSW();
     await renderRecentList();
+    updateBrushUI();
     updateToolUI();
     showHome();
   }
 
   init();
 
-  // cleanup when page closed
   window.addEventListener("beforeunload", () => {
     cleanupObjectURL();
   });
