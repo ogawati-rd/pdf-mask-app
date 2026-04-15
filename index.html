@@ -15,7 +15,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="PDF暗記" />
 
-  <link rel="stylesheet" href="./style.css?v=24" />
+  <link rel="stylesheet" href="./style.css?v=32" />
 </head>
 <body>
   <div id="app">
@@ -23,7 +23,7 @@
       <header class="home-header">
         <h1>PDF暗記アプリ</h1>
         <div class="app-version-row">
-          <p class="app-version">Ver 2.4</p>
+          <p class="app-version">Ver 3.1</p>
           <button id="checkUpdateBtn" type="button" class="version-link-btn">
             更新を確認
           </button>
@@ -183,10 +183,6 @@
     </section>
   </div>
 
-  <script type="module">
-    import * as pdfjsLib from "/pdf-mask-app/pdf.mjs";
-    window.pdfjsLib = pdfjsLib;
-    await import("/pdf-mask-app/app.js?v=24");
-  </script>
+  <script type="module" src="./app.js?v=32"></script>
 </body>
 </html>
