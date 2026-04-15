@@ -1,16 +1,13 @@
-const CACHE_NAME = "pdf-mask-app-v32";
+const CACHE_NAME = "pdf-mask-app-v24";
 
 const ASSETS = [
-  "./",
-  "./index.html",
-  "./style.css?v=32",
-  "./app.js?v=32",
-  "./manifest.json",
-  "./pdf.mjs",
-  "./pdf.worker.mjs",
-  "./src/app-core.js",
-  "./src/db.js",
-  "./src/utils.js"
+  "/pdf-mask-app/",
+  "/pdf-mask-app/index.html",
+  "/pdf-mask-app/style.css?v=24",
+  "/pdf-mask-app/app.js?v=24",
+  "/pdf-mask-app/manifest.json",
+  "/pdf-mask-app/pdf.mjs",
+  "/pdf-mask-app/pdf.worker.mjs"
 ];
 
 self.addEventListener("install", (event) => {
@@ -56,22 +53,22 @@ self.addEventListener("fetch", (event) => {
         .then((response) => {
           const copy = response.clone();
           caches.open(CACHE_NAME).then((cache) => {
-            cache.put("./index.html", copy);
+            cache.put("/pdf-mask-app/index.html", copy);
           });
           return response;
         })
-        .catch(() => caches.match("./index.html"))
+        .catch(() => caches.match("/pdf-mask-app/index.html"))
     );
     return;
   }
 
   // バージョン付き静的ファイル
   if (
-    url.pathname.endsWith("/style.css") ||
-    url.pathname.endsWith("/app.js") ||
-    url.pathname.endsWith("/pdf.mjs") ||
-    url.pathname.endsWith("/pdf.worker.mjs") ||
-    url.pathname.endsWith("/manifest.json")
+    url.pathname.startsWith("/pdf-mask-app/style.css") ||
+    url.pathname.startsWith("/pdf-mask-app/app.js") ||
+    url.pathname.startsWith("/pdf-mask-app/pdf.mjs") ||
+    url.pathname.startsWith("/pdf-mask-app/pdf.worker.mjs") ||
+    url.pathname.startsWith("/pdf-mask-app/manifest.json")
   ) {
     event.respondWith(
       caches.match(req).then((cached) => {
