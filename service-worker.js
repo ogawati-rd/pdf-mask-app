@@ -1,10 +1,10 @@
-const CACHE_NAME = "pdf-mask-app-v23";
+const CACHE_NAME = "pdf-mask-app-v24";
 
 const ASSETS = [
   "/pdf-mask-app/",
   "/pdf-mask-app/index.html",
-  "/pdf-mask-app/style.css?v=23",
-  "/pdf-mask-app/app.js?v=23",
+  "/pdf-mask-app/style.css?v=24",
+  "/pdf-mask-app/app.js?v=24",
   "/pdf-mask-app/manifest.json",
   "/pdf-mask-app/pdf.mjs",
   "/pdf-mask-app/pdf.worker.mjs"
