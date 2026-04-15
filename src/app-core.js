@@ -4,6 +4,7 @@ import {
   dbGetAllDocs,
   dbGetDoc,
   dbGetPdfBlob,
+  migrateLegacyDatabasesIfNeeded,
   dbPutDoc,
   dbPutPdfBlob
 } from "./db.js";
@@ -31,6 +32,7 @@ export async function initApp({ pdfjsLib }) {
 
   bindEvents(ctx);
   await registerSW();
+  await migrateLegacyDatabasesIfNeeded();
   await renderRecentList(ctx);
   updateBrushUI(ctx);
   updateMarkUI(ctx);

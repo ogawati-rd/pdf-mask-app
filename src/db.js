@@ -2,6 +2,10 @@ const DB_NAME = "pdf-memorize-pwa-db";
 const DB_VERSION = 2;
 const STORE_DOCS = "documents";
 const STORE_BLOBS = "pdfBlobs";
+const LEGACY_DB_NAMES = [
+  "pdf-memorize-pwa-db-v31",
+  "pdf-memorize-pwa-db-ver3"
+];
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -42,6 +46,14 @@ function openDB() {
       };
     };
 
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function openNamedDB(name) {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(name);
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
@@ -117,4 +129,64 @@ export async function dbGetPdfBlob(id) {
     req.onsuccess = () => resolve(req.result?.pdfBlob || null);
     req.onerror = () => reject(req.error);
   });
+}
+
+export async function migrateLegacyDatabasesIfNeeded() {
+  const currentDocs = await dbGetAllDocs();
+  if (currentDocs.length > 0) return false;
+
+  let migrated = false;
+
+  for (const legacyName of LEGACY_DB_NAMES) {
+    try {
+      const legacyDb = await openNamedDB(legacyName);
+      const hasDocs = legacyDb.objectStoreNames.contains(STORE_DOCS);
+      if (!hasDocs) {
+        legacyDb.close();
+        continue;
+      }
+
+      const docs = await new Promise((resolve, reject) => {
+        const tx = legacyDb.transaction(STORE_DOCS, "readonly");
+        const req = tx.objectStore(STORE_DOCS).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = () => reject(req.error);
+      });
+
+      let blobs = [];
+      if (legacyDb.objectStoreNames.contains(STORE_BLOBS)) {
+        blobs = await new Promise((resolve, reject) => {
+          const tx = legacyDb.transaction(STORE_BLOBS, "readonly");
+          const req = tx.objectStore(STORE_BLOBS).getAll();
+          req.onsuccess = () => resolve(req.result || []);
+          req.onerror = () => reject(req.error);
+        });
+      }
+
+      legacyDb.close();
+
+      for (const doc of docs) {
+        const nextDoc = { ...doc };
+        delete nextDoc.pdfBlob;
+        await dbPutDoc(nextDoc);
+        if (doc.pdfBlob) {
+          await dbPutPdfBlob(doc.id, doc.pdfBlob);
+        }
+      }
+
+      for (const blobRecord of blobs) {
+        if (blobRecord?.id && blobRecord?.pdfBlob) {
+          await dbPutPdfBlob(blobRecord.id, blobRecord.pdfBlob);
+        }
+      }
+
+      if (docs.length || blobs.length) {
+        migrated = true;
+      }
+    } catch {
+      // Ignore missing legacy databases.
+    }
+  }
+
+  return migrated;
 }
