@@ -1,5 +1,5 @@
-const DB_NAME = "pdf-memorize-pwa-db-v31";
-const DB_VERSION = 1;
+const DB_NAME = "pdf-memorize-pwa-db";
+const DB_VERSION = 2;
 const STORE_DOCS = "documents";
 const STORE_BLOBS = "pdfBlobs";
 
@@ -9,6 +9,7 @@ function openDB() {
 
     req.onupgradeneeded = (event) => {
       const db = event.target.result;
+      const tx = event.target.transaction;
 
       if (!db.objectStoreNames.contains(STORE_DOCS)) {
         const store = db.createObjectStore(STORE_DOCS, { keyPath: "id" });
@@ -18,6 +19,27 @@ function openDB() {
       if (!db.objectStoreNames.contains(STORE_BLOBS)) {
         db.createObjectStore(STORE_BLOBS, { keyPath: "id" });
       }
+
+      // Migrate legacy v2.4 shape:
+      // documents store used to embed pdfBlob directly in each document record.
+      // Move those blobs into the dedicated store so existing study data stays visible.
+      const docsStore = tx.objectStore(STORE_DOCS);
+      const blobsStore = tx.objectStore(STORE_BLOBS);
+      const cursorReq = docsStore.openCursor();
+
+      cursorReq.onsuccess = () => {
+        const cursor = cursorReq.result;
+        if (!cursor) return;
+
+        const doc = cursor.value;
+        if (doc && doc.id && doc.pdfBlob) {
+          blobsStore.put({ id: doc.id, pdfBlob: doc.pdfBlob });
+          delete doc.pdfBlob;
+          cursor.update(doc);
+        }
+
+        cursor.continue();
+      };
     };
 
     req.onsuccess = () => resolve(req.result);
