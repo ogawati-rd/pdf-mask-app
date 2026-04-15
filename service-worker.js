@@ -1,10 +1,10 @@
-const CACHE_NAME = "pdf-mask-app-v22";
+const CACHE_NAME = "pdf-mask-app-v23";
 
 const ASSETS = [
   "/pdf-mask-app/",
   "/pdf-mask-app/index.html",
-  "/pdf-mask-app/style.css?v=22",
-  "/pdf-mask-app/app.js?v=22",
+  "/pdf-mask-app/style.css?v=23",
+  "/pdf-mask-app/app.js?v=23",
   "/pdf-mask-app/manifest.json",
   "/pdf-mask-app/pdf.mjs",
   "/pdf-mask-app/pdf.worker.mjs"
@@ -46,7 +46,7 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(req.url);
 
-  // ナビゲーションは network-first
+  // HTMLナビゲーションは network-first
   if (req.mode === "navigate") {
     event.respondWith(
       fetch(req)
@@ -62,7 +62,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // バージョン付きCSS/JSは cache-first
+  // バージョン付き静的ファイル
   if (
     url.pathname.startsWith("/pdf-mask-app/style.css") ||
     url.pathname.startsWith("/pdf-mask-app/app.js") ||
@@ -86,7 +86,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // それ以外
+  // その他は network-first fallback
   event.respondWith(
     fetch(req).catch(() => caches.match(req))
   );

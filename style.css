@@ -521,6 +521,11 @@ button {
   gap: 10px;
 }
 
+.mark-control-compact {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
 .color-chips,
 .mark-chips {
   display: flex;
@@ -556,11 +561,24 @@ button {
   font-weight: 800;
   font-size: 18px;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .mark-chip.active {
   background: linear-gradient(180deg, #2b7fe0, #205fa9);
   border-color: #4c96eb;
+}
+
+.mark-eraser-chip {
+  padding: 0;
+}
+
+.mark-eraser-icon {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 
 /* mode switch */
@@ -586,6 +604,25 @@ button {
 .mode-switch-btn.active {
   background: linear-gradient(180deg, #2b7fe0, #205fa9);
   color: #fff;
+}
+
+.app-version-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.version-link-btn {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent-2);
+  font-size: 12px;
+  line-height: 1;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 /* ------------------------------
@@ -636,6 +673,11 @@ button {
     min-width: 34px;
     min-height: 34px;
     font-size: 16px;
+  }
+
+  .mark-eraser-icon {
+    width: 16px;
+    height: 16px;
   }
 
   .mode-switch-btn {

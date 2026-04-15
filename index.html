@@ -15,15 +15,19 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="PDF暗記" />
 
-  <link rel="stylesheet" href="./style.css?v=22" />
+  <link rel="stylesheet" href="./style.css?v=23" />
 </head>
 <body>
   <div id="app">
     <section id="homeScreen" class="screen active">
       <header class="home-header">
         <h1>PDF暗記アプリ</h1>
-        <p class="home-subtitle">PDFを読み込み、隠す教材を作成して学習</p>
-        <p class="app-version">Ver 2.2</p>
+        <div class="app-version-row">
+          <p class="app-version">Ver 2.3</p>
+          <button id="checkUpdateBtn" type="button" class="version-link-btn">
+            更新を確認
+          </button>
+        </div>
       </header>
 
       <div class="home-actions">
@@ -36,10 +40,6 @@
           />
           PDFを開く
         </label>
-
-        <button id="checkUpdateBtn" type="button" class="secondary-btn">
-          更新を確認
-        </button>
 
         <button id="clearHistoryBtn" type="button" class="secondary-btn">
           履歴を削除
@@ -62,11 +62,6 @@
             <div id="docTitle" class="doc-title">-</div>
             <div id="pageInfo" class="page-info">0 / 0</div>
           </div>
-        </div>
-
-        <div class="viewer-header-row sub">
-          <div id="modeLabel" class="status-pill">学習</div>
-          <div id="toolLabel" class="status-pill">待機中</div>
         </div>
       </header>
 
@@ -144,13 +139,32 @@
             <button id="hideAllBtn" type="button" class="tool-btn">全隠し</button>
 
             <div class="tool-control-group">
-              <div class="tool-control mark-control">
-                <span>印</span>
+              <div class="tool-control mark-control mark-control-compact">
                 <div id="markTypeChips" class="mark-chips">
                   <button type="button" class="mark-chip" data-mark="star" aria-label="重要">★</button>
                   <button type="button" class="mark-chip" data-mark="review" aria-label="要復習">!</button>
                   <button type="button" class="mark-chip" data-mark="question" aria-label="わからない">?</button>
                   <button type="button" class="mark-chip" data-mark="done" aria-label="覚えた">○</button>
+
+                  <button
+                    type="button"
+                    class="mark-chip mark-eraser-chip"
+                    data-mark="erase"
+                    aria-label="印を消す"
+                    title="印を消す"
+                  >
+                    <svg
+                      class="mark-eraser-icon"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path
+                        d="M3.7 14.3 11.9 6a2 2 0 0 1 2.8 0l5.3 5.3a2 2 0 0 1 0 2.8l-4.2 4.2a2 2 0 0 1-1.4.6H9.8a2 2 0 0 1-1.4-.6l-4.7-4.7a1 1 0 0 1 0-1.3Zm6 3.2h4.7l4.2-4.2-5.3-5.3-7.5 7.5 4 4Zm7.8 2.8H21v1.5h-3.5z"
+                        fill="currentColor"
+                      />
+                    </svg>
+                  </button>
                 </div>
               </div>
             </div>
@@ -172,7 +186,7 @@
   <script type="module">
     import * as pdfjsLib from "/pdf-mask-app/pdf.mjs";
     window.pdfjsLib = pdfjsLib;
-    await import("/pdf-mask-app/app.js?v=22");
+    await import("/pdf-mask-app/app.js?v=23");
   </script>
 </body>
 </html>

@@ -21,8 +21,6 @@
   const backBtn = document.getElementById("backBtn");
   const docTitle = document.getElementById("docTitle");
   const pageInfo = document.getElementById("pageInfo");
-  const modeLabel = document.getElementById("modeLabel");
-  const toolLabel = document.getElementById("toolLabel");
 
   const pdfStageWrap = document.getElementById("pdfStageWrap");
   const viewerBody = document.getElementById("viewerBody");
@@ -72,7 +70,7 @@
     brushWidth: 18,
     brushColor: "rgba(0,0,0,0.96)",
 
-    activeMarkType: null, // star | review | question | done | null
+    activeMarkType: null, // star | review | question | done | erase | null
 
     docState: null,
 
@@ -265,7 +263,6 @@
     return !mask.userHidden;
   }
 
-  // すべて「見た目のCSS座標」で扱う
   function getCanvasMetrics(overlayCanvas) {
     const rect = overlayCanvas.getBoundingClientRect();
     return {
@@ -385,28 +382,10 @@
     });
   }
 
-  function updateHeader() {
-    docTitle.textContent = state.currentPdfName || "-";
-    pageInfo.textContent = `${state.currentPage} / ${state.totalPages || 0}`;
-    modeLabel.textContent = state.mode === "create" ? "作成" : "学習";
-
-    if (state.mode === "create") {
-      const map = {
-        line: "直線",
-        rect: "四角",
-        eraser: "消しゴム"
-      };
-      toolLabel.textContent = map[state.createTool] || "待機中";
-    } else {
-      const map = {
-        star: "印: 重要",
-        review: "印: 要復習",
-        question: "印: わからない",
-        done: "印: 覚えた"
-      };
-      toolLabel.textContent = state.activeMarkType ? map[state.activeMarkType] : "タップで表示切替";
-    }
-  }
+ function updateHeader() {
+  docTitle.textContent = state.currentPdfName || "-";
+  pageInfo.textContent = `${state.currentPage} / ${state.totalPages || 0}`;
+}
 
   function updateToolUI() {
     drawLineBtn.classList.toggle("active", state.mode === "create" && state.createTool === "line");
@@ -459,51 +438,52 @@
   }
 
   async function checkForAppUpdate() {
-  if (!("serviceWorker" in navigator)) {
-    alert("この環境では更新確認に対応していません。");
-    return;
+    if (!("serviceWorker" in navigator)) {
+      alert("この環境では更新確認に対応していません。");
+      return;
+    }
+
+    try {
+      const registration = await navigator.serviceWorker.getRegistration();
+      if (!registration) {
+        alert("Service Worker が見つかりませんでした。Safariで一度開き直してから試してください。");
+        return;
+      }
+
+      let refreshed = false;
+
+      const onControllerChange = () => {
+        if (refreshed) return;
+        refreshed = true;
+        navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
+        window.location.reload();
+      };
+
+      navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
+
+      await registration.update();
+
+      if (registration.waiting) {
+        registration.waiting.postMessage({ type: "SKIP_WAITING" });
+        return;
+      }
+
+      if (registration.installing) {
+        registration.installing.addEventListener("statechange", () => {
+          if (registration.waiting) {
+            registration.waiting.postMessage({ type: "SKIP_WAITING" });
+          }
+        });
+        return;
+      }
+
+      alert("最新の状態です。");
+    } catch (err) {
+      console.error(err);
+      alert("更新確認に失敗しました。通信状態を確認してもう一度お試しください。");
+    }
   }
 
-  try {
-    const registration = await navigator.serviceWorker.getRegistration();
-    if (!registration) {
-      alert("Service Worker が見つかりませんでした。Safariで一度開き直してから試してください。");
-      return;
-    }
-
-    let refreshed = false;
-
-    const onControllerChange = () => {
-      if (refreshed) return;
-      refreshed = true;
-      navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
-      window.location.reload();
-    };
-
-    navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
-
-    await registration.update();
-
-    if (registration.waiting) {
-      registration.waiting.postMessage({ type: "SKIP_WAITING" });
-      return;
-    }
-
-    if (registration.installing) {
-      registration.installing.addEventListener("statechange", () => {
-        if (registration.waiting) {
-          registration.waiting.postMessage({ type: "SKIP_WAITING" });
-        }
-      });
-      return;
-    }
-
-    alert("最新の状態です。");
-  } catch (err) {
-    console.error(err);
-    alert("更新確認に失敗しました。通信状態を確認してもう一度お試しください。");
-  }
-}
   // ------------------------------
   // Screen control
   // ------------------------------
@@ -1047,7 +1027,7 @@
   async function placeOrToggleMark(pageNum, px, py) {
     const pageState = getPageState(pageNum);
     const pageView = getPageView(pageNum);
-    if (!pageState || !pageView || !state.activeMarkType) return;
+    if (!pageState || !pageView || !state.activeMarkType || state.activeMarkType === "erase") return;
 
     const existing = findAnnotationAt(pageNum, px, py);
     pushUndoSnapshot(pageNum);
@@ -1069,6 +1049,19 @@
     await persistPageState();
   }
 
+  async function eraseMarkAt(pageNum, px, py) {
+    const pageState = getPageState(pageNum);
+    if (!pageState) return;
+
+    const existing = findAnnotationAt(pageNum, px, py);
+    if (!existing) return;
+
+    pushUndoSnapshot(pageNum);
+    pageState.annotations.splice(existing.index, 1);
+    redrawAnnotationsForPage(pageNum);
+    await persistPageState();
+  }
+
   // ------------------------------
   // Pointer events
   // ------------------------------
@@ -1083,6 +1076,12 @@
     state.activePointerId = e.pointerId;
 
     if (state.mode === "study") {
+      if (state.activeMarkType === "erase") {
+        eraseMarkAt(pageNum, pos.x, pos.y);
+        e.preventDefault();
+        return;
+      }
+
       if (state.activeMarkType) {
         placeOrToggleMark(pageNum, pos.x, pos.y);
         e.preventDefault();
@@ -1269,28 +1268,28 @@
   // Events
   // ------------------------------
   pdfFileInput.addEventListener("change", async (e) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  await handleFileSelect(file);
-  pdfFileInput.value = "";
- });
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await handleFileSelect(file);
+    pdfFileInput.value = "";
+  });
 
- if (checkUpdateBtn) {
-  checkUpdateBtn.addEventListener("click", checkForAppUpdate);
- }
+  if (checkUpdateBtn) {
+    checkUpdateBtn.addEventListener("click", checkForAppUpdate);
+  }
 
- clearHistoryBtn.addEventListener("click", async () => {
-  const ok = confirm("最近開いたPDFの履歴と保存データをすべて削除しますか？");
-  if (!ok) return;
-  await dbClearAllDocs();
-  await renderRecentList();
- });
+  clearHistoryBtn.addEventListener("click", async () => {
+    const ok = confirm("最近開いたPDFの履歴と保存データをすべて削除しますか？");
+    if (!ok) return;
+    await dbClearAllDocs();
+    await renderRecentList();
+  });
 
- backBtn.addEventListener("click", async () => {
-  await persistDocState();
-  showHome();
-  await renderRecentList();
- });
+  backBtn.addEventListener("click", async () => {
+    await persistDocState();
+    showHome();
+    await renderRecentList();
+  });
 
   createModeBtn.addEventListener("click", () => setMode("create"));
   studyModeBtn.addEventListener("click", () => setMode("study"));
