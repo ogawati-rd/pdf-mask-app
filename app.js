@@ -21,22 +21,29 @@
   const docTitle = document.getElementById("docTitle");
   const pageInfo = document.getElementById("pageInfo");
   const modeLabel = document.getElementById("modeLabel");
+  const toolLabel = document.getElementById("toolLabel");
 
   const pdfStageWrap = document.getElementById("pdfStageWrap");
   const viewerBody = document.getElementById("viewerBody");
 
-  const viewModeBtn = document.getElementById("viewModeBtn");
+  const createTools = document.getElementById("createTools");
+  const studyTools = document.getElementById("studyTools");
+
+  const createModeBtn = document.getElementById("createModeBtn");
+  const studyModeBtn = document.getElementById("studyModeBtn");
+
   const drawLineBtn = document.getElementById("drawLineBtn");
   const drawRectBtn = document.getElementById("drawRectBtn");
   const eraserBtn = document.getElementById("eraserBtn");
+  const undoBtn = document.getElementById("undoBtn");
+
   const showAllBtn = document.getElementById("showAllBtn");
   const hideAllBtn = document.getElementById("hideAllBtn");
-  const prevPageBtn = document.getElementById("prevPageBtn");
-  const nextPageBtn = document.getElementById("nextPageBtn");
 
   const brushSizeInput = document.getElementById("brushSizeInput");
   const brushSizeValue = document.getElementById("brushSizeValue");
   const colorChips = document.getElementById("colorChips");
+  const markTypeChips = document.getElementById("markTypeChips");
 
   // ------------------------------
   // App state
@@ -49,7 +56,8 @@
     currentPdfName: "",
     currentPage: 1,
     totalPages: 0,
-    tool: "view", // view | line | rect | eraser
+    mode: "study", // create | study
+    createTool: "line", // line | rect | eraser
     rendering: false,
     resizeTimer: null,
 
@@ -65,12 +73,18 @@
     brushWidth: 18,
     brushColor: "rgba(0,0,0,0.96)",
 
+    // study mark
+    activeMarkType: null, // star | review | question | done | null
+
     // current persistent doc state
     docState: null,
 
     // rendered pages
     pageViews: new Map(),
     pagesContainer: null,
+
+    // undo
+    undoStack: [],
 
     scrollRaf: null
   };
@@ -181,11 +195,28 @@
     return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
   }
 
+  function deepClone(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function formatFileSizeMB(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) return "0 MB";
+    const mb = bytes / (1024 * 1024);
+    return `${mb.toFixed(mb < 10 ? 1 : 0)} MB`;
+  }
+
   function getPageState(pageNum) {
     if (!state.docState) return null;
     const key = String(pageNum);
     if (!state.docState.pages[key]) {
-      state.docState.pages[key] = { masks: [] };
+      state.docState.pages[key] = { masks: [], annotations: [] };
+    } else {
+      if (!Array.isArray(state.docState.pages[key].masks)) {
+        state.docState.pages[key].masks = [];
+      }
+      if (!Array.isArray(state.docState.pages[key].annotations)) {
+        state.docState.pages[key].annotations = [];
+      }
     }
     return state.docState.pages[key];
   }
@@ -200,8 +231,35 @@
       updatedAt: nowISO(),
       totalPages: 0,
       lastPage: 1,
-      pages: {}
+      pages: {},
+      favorite: false,
+      schemaVersion: 2
     };
+  }
+
+  function migrateDocShape(doc) {
+    if (!doc.pages) doc.pages = {};
+    for (const key of Object.keys(doc.pages)) {
+      const page = doc.pages[key] || {};
+      if (!Array.isArray(page.masks)) page.masks = [];
+      if (!Array.isArray(page.annotations)) page.annotations = [];
+
+      for (const mask of page.masks) {
+        if (mask.type === "line" && Array.isArray(mask.points) && mask.points.length >= 2) {
+          const first = mask.points[0];
+          const last = mask.points[mask.points.length - 1];
+          mask.x1 = first.x;
+          mask.y1 = first.y;
+          mask.x2 = last.x;
+          mask.y2 = last.y;
+          delete mask.points;
+        }
+      }
+      doc.pages[key] = page;
+    }
+    if (typeof doc.favorite !== "boolean") doc.favorite = false;
+    doc.schemaVersion = 2;
+    return doc;
   }
 
   function isMaskVisible(mask) {
@@ -216,16 +274,18 @@
   }
 
   function toRatioPoint(px, py, overlayCanvas) {
+    const rect = overlayCanvas.getBoundingClientRect();
     return {
-      x: overlayCanvas.width ? px / overlayCanvas.width : 0,
-      y: overlayCanvas.height ? py / overlayCanvas.height : 0
+      x: rect.width ? px / rect.width : 0,
+      y: rect.height ? py / rect.height : 0
     };
   }
 
   function fromRatioPoint(rx, ry, overlayCanvas) {
+    const rect = overlayCanvas.getBoundingClientRect();
     return {
-      x: rx * overlayCanvas.width,
-      y: ry * overlayCanvas.height
+      x: rx * rect.width,
+      y: ry * rect.height
     };
   }
 
@@ -238,23 +298,12 @@
   }
 
   function downloadMeta(doc) {
-    const pagesCount = doc.pages ? Object.keys(doc.pages).length : 0;
-    return `${formatDate(doc.updatedAt)} ・ ${doc.size.toLocaleString()} bytes ・ ${pagesCount}ページ保存`;
+    const pagesCount = doc.totalPages || 0;
+    return `${formatDate(doc.updatedAt)} ・ ${formatFileSizeMB(doc.size)} ・ ${pagesCount}ページ`;
   }
 
   function isPenEvent(e) {
     return e.pointerType === "pen";
-  }
-
-  function updateBrushUI() {
-    if (brushSizeValue) brushSizeValue.textContent = String(state.brushWidth);
-
-    if (colorChips) {
-      const chips = colorChips.querySelectorAll(".color-chip");
-      chips.forEach((chip) => {
-        chip.classList.toggle("active", chip.dataset.color === state.brushColor);
-      });
-    }
   }
 
   function getPageView(pageNum) {
@@ -267,6 +316,125 @@
       pdfStageWrap.innerHTML = "";
     }
     state.pagesContainer = null;
+  }
+
+  function getMarkSymbol(type) {
+    switch (type) {
+      case "star":
+        return "★";
+      case "review":
+        return "!";
+      case "question":
+        return "?";
+      case "done":
+        return "○";
+      default:
+        return "•";
+    }
+  }
+
+  function pushUndoSnapshot(pageNum) {
+    const pageState = getPageState(pageNum);
+    if (!pageState) return;
+    state.undoStack.push({
+      pageNum,
+      pageState: deepClone(pageState)
+    });
+    if (state.undoStack.length > 50) {
+      state.undoStack.shift();
+    }
+  }
+
+  async function undoLastAction() {
+    if (!state.undoStack.length) return;
+    const last = state.undoStack.pop();
+    if (!last) return;
+    state.docState.pages[String(last.pageNum)] = deepClone(last.pageState);
+    redrawPageDecorations(last.pageNum);
+    await persistPageState();
+  }
+
+  // ------------------------------
+  // UI helpers
+  // ------------------------------
+  function updateBrushUI() {
+    if (brushSizeValue) brushSizeValue.textContent = String(state.brushWidth);
+
+    if (colorChips) {
+      const chips = colorChips.querySelectorAll(".color-chip");
+      chips.forEach((chip) => {
+        chip.classList.toggle("active", chip.dataset.color === state.brushColor);
+      });
+    }
+  }
+
+  function updateMarkUI() {
+    if (!markTypeChips) return;
+    const chips = markTypeChips.querySelectorAll(".mark-chip");
+    chips.forEach((chip) => {
+      chip.classList.toggle("active", chip.dataset.mark === state.activeMarkType);
+    });
+  }
+
+  function updateHeader() {
+    docTitle.textContent = state.currentPdfName || "-";
+    pageInfo.textContent = `${state.currentPage} / ${state.totalPages || 0}`;
+    modeLabel.textContent = state.mode === "create" ? "作成" : "学習";
+
+    if (state.mode === "create") {
+      const map = {
+        line: "直線",
+        rect: "四角",
+        eraser: "消しゴム"
+      };
+      toolLabel.textContent = map[state.createTool] || "待機中";
+    } else {
+      const map = {
+        star: "印: 重要",
+        review: "印: 要復習",
+        question: "印: わからない",
+        done: "印: 覚えた"
+      };
+      toolLabel.textContent = state.activeMarkType ? map[state.activeMarkType] : "タップで表示切替";
+    }
+  }
+
+  function updateToolUI() {
+    drawLineBtn.classList.toggle("active", state.mode === "create" && state.createTool === "line");
+    drawRectBtn.classList.toggle("active", state.mode === "create" && state.createTool === "rect");
+    eraserBtn.classList.toggle("active", state.mode === "create" && state.createTool === "eraser");
+
+    createTools.classList.toggle("is-hidden", state.mode !== "create");
+    studyTools.classList.toggle("is-hidden", state.mode !== "study");
+
+    createModeBtn.classList.toggle("active", state.mode === "create");
+    studyModeBtn.classList.toggle("active", state.mode === "study");
+
+    setTouchMode(state.mode === "create" && state.drawing);
+    updateBrushUI();
+    updateMarkUI();
+    updateHeader();
+  }
+
+  function setCreateTool(tool) {
+    state.createTool = tool;
+    state.currentDraft = null;
+    state.drawing = false;
+    state.drawingPage = null;
+    redrawAllOverlays();
+    updateToolUI();
+  }
+
+  function setMode(mode) {
+    state.mode = mode;
+    state.currentDraft = null;
+    state.drawing = false;
+    state.drawingPage = null;
+    if (mode === "create") {
+      state.activeMarkType = null;
+    }
+    redrawAllOverlays();
+    updateToolUI();
   }
 
   // ------------------------------
@@ -298,7 +466,7 @@
   // Recent list
   // ------------------------------
   async function renderRecentList() {
-    const docs = await dbGetAllDocs();
+    const docs = (await dbGetAllDocs()).map(migrateDocShape);
     docs.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
 
     recentList.innerHTML = "";
@@ -363,13 +531,15 @@
         lastModified: file.lastModified,
         pdfBlob: file
       });
-      await dbPutDoc(existing);
     } else {
+      existing = migrateDocShape(existing);
       existing.pdfBlob = file;
       existing.updatedAt = nowISO();
-      await dbPutDoc(existing);
+      existing.size = file.size;
+      existing.lastModified = file.lastModified;
     }
 
+    await dbPutDoc(existing);
     await openDocState(existing);
     await renderRecentList();
   }
@@ -380,14 +550,15 @@
       alert("保存されたPDFが見つかりませんでした。");
       return;
     }
-    await openDocState(doc);
+    await openDocState(migrateDocShape(doc));
   }
 
   async function openDocState(doc) {
     cleanupObjectURL();
     clearPageViews();
+    state.undoStack = [];
 
-    state.docState = doc;
+    state.docState = migrateDocShape(doc);
     state.currentPdfId = doc.id;
     state.currentPdfName = doc.name;
     state.pdfBlob = doc.pdfBlob;
@@ -410,7 +581,6 @@
 
     await persistDocState();
     showViewer();
-    updateHeader();
     updateToolUI();
     await renderAllPages();
 
@@ -462,17 +632,24 @@
     const overlayCanvas = document.createElement("canvas");
     overlayCanvas.className = "overlay-page-canvas";
 
-    stage.append(pdfCanvas, overlayCanvas);
+    const annotationLayer = document.createElement("div");
+    annotationLayer.className = "annotation-layer";
+
+    stage.append(pdfCanvas, overlayCanvas, annotationLayer);
 
     const pageView = {
       pageNum,
       stage,
       pdfCanvas,
       overlayCanvas,
-      pdfCtx: pdfCanvas.getContext("2d"),
+      annotationLayer,
+      pdfCtx: pdfCanvas.getContext("2d", { alpha: false }),
       overlayCtx: overlayCanvas.getContext("2d"),
       width: 0,
-      height: 0
+      height: 0,
+      cssWidth: 0,
+      cssHeight: 0,
+      dpr: 1
     };
 
     overlayCanvas.addEventListener("pointerdown", (e) => onPointerDown(e, pageNum), { passive: false });
@@ -510,38 +687,57 @@
 
     const unscaled = page.getViewport({ scale: 1 });
     const containerWidth = Math.max(320, pdfStageWrap.clientWidth - 28);
-    const scale = containerWidth / unscaled.width;
-    const viewport = page.getViewport({ scale });
+    const baseScale = containerWidth / unscaled.width;
 
-    pageView.width = Math.floor(viewport.width);
-    pageView.height = Math.floor(viewport.height);
+    const rawDpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(rawDpr, 2);
+
+    const cssViewport = page.getViewport({ scale: baseScale });
+    const renderViewport = page.getViewport({ scale: baseScale * dpr });
+
+    pageView.dpr = dpr;
+    pageView.cssWidth = cssViewport.width;
+    pageView.cssHeight = cssViewport.height;
+    pageView.width = Math.floor(renderViewport.width);
+    pageView.height = Math.floor(renderViewport.height);
 
     pageView.pdfCanvas.width = pageView.width;
     pageView.pdfCanvas.height = pageView.height;
-    pageView.pdfCanvas.style.width = `${viewport.width}px`;
-    pageView.pdfCanvas.style.height = `${viewport.height}px`;
+    pageView.pdfCanvas.style.width = `${cssViewport.width}px`;
+    pageView.pdfCanvas.style.height = `${cssViewport.height}px`;
 
     pageView.overlayCanvas.width = pageView.width;
     pageView.overlayCanvas.height = pageView.height;
-    pageView.overlayCanvas.style.width = `${viewport.width}px`;
-    pageView.overlayCanvas.style.height = `${viewport.height}px`;
+    pageView.overlayCanvas.style.width = `${cssViewport.width}px`;
+    pageView.overlayCanvas.style.height = `${cssViewport.height}px`;
 
-    pageView.stage.style.width = `${viewport.width}px`;
-    pageView.stage.style.height = `${viewport.height}px`;
+    pageView.annotationLayer.style.width = `${cssViewport.width}px`;
+    pageView.annotationLayer.style.height = `${cssViewport.height}px`;
 
+    pageView.stage.style.width = `${cssViewport.width}px`;
+    pageView.stage.style.height = `${cssViewport.height}px`;
+
+    pageView.pdfCtx.setTransform(1, 0, 0, 1, 0, 0);
     pageView.pdfCtx.clearRect(0, 0, pageView.pdfCanvas.width, pageView.pdfCanvas.height);
+
     await page.render({
       canvasContext: pageView.pdfCtx,
-      viewport
+      viewport: renderViewport
     }).promise;
 
-    redrawOverlayForPage(pageNum);
+    redrawPageDecorations(pageNum);
   }
 
   function redrawAllOverlays() {
     for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
       redrawOverlayForPage(pageNum);
+      redrawAnnotationsForPage(pageNum);
     }
+  }
+
+  function redrawPageDecorations(pageNum) {
+    redrawOverlayForPage(pageNum);
+    redrawAnnotationsForPage(pageNum);
   }
 
   function redrawOverlayForPage(pageNum) {
@@ -562,14 +758,32 @@
     }
   }
 
+  function redrawAnnotationsForPage(pageNum) {
+    const pageView = getPageView(pageNum);
+    const pageState = getPageState(pageNum);
+    if (!pageView || !pageState) return;
+
+    pageView.annotationLayer.innerHTML = "";
+
+    for (const ann of pageState.annotations) {
+      if (ann.type !== "mark") continue;
+
+      const p = fromRatioPoint(ann.x, ann.y, pageView.overlayCanvas);
+      const el = document.createElement("div");
+      el.className = `annotation-mark mark-${ann.kind}`;
+      el.style.left = `${p.x}px`;
+      el.style.top = `${p.y}px`;
+      el.textContent = getMarkSymbol(ann.kind);
+      pageView.annotationLayer.appendChild(el);
+    }
+  }
+
   function drawMask(ctx, overlayCanvas, mask, isDraft) {
     const color = mask.color || "rgba(0,0,0,0.96)";
 
     ctx.save();
     ctx.fillStyle = color;
     ctx.strokeStyle = color;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
     ctx.globalAlpha = isDraft ? 0.88 : 1;
 
     if (mask.type === "rect") {
@@ -579,139 +793,47 @@
     }
 
     if (mask.type === "line") {
-      if (!mask.points || mask.points.length < 2) {
+      if (
+        typeof mask.x1 !== "number" ||
+        typeof mask.y1 !== "number" ||
+        typeof mask.x2 !== "number" ||
+        typeof mask.y2 !== "number"
+      ) {
         ctx.restore();
         return;
       }
 
-      const widthPx = (mask.widthRatio || 0.02) * overlayCanvas.width;
-      ctx.lineWidth = Math.max(4, widthPx);
-      ctx.beginPath();
+      const a = fromRatioPoint(mask.x1, mask.y1, overlayCanvas);
+      const b = fromRatioPoint(mask.x2, mask.y2, overlayCanvas);
+      const widthPx = Math.max(4, (mask.widthRatio || 0.02) * overlayCanvas.getBoundingClientRect().width);
 
-      const first = fromRatioPoint(mask.points[0].x, mask.points[0].y, overlayCanvas);
-      ctx.moveTo(first.x, first.y);
-
-      for (let i = 1; i < mask.points.length; i++) {
-        const p = fromRatioPoint(mask.points[i].x, mask.points[i].y, overlayCanvas);
-        ctx.lineTo(p.x, p.y);
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1) {
+        ctx.restore();
+        return;
       }
-      ctx.stroke();
+
+      const nx = -dy / len;
+      const ny = dx / len;
+      const half = widthPx / 2;
+
+      ctx.beginPath();
+      ctx.moveTo(a.x + nx * half, a.y + ny * half);
+      ctx.lineTo(b.x + nx * half, b.y + ny * half);
+      ctx.lineTo(b.x - nx * half, b.y - ny * half);
+      ctx.lineTo(a.x - nx * half, a.y - ny * half);
+      ctx.closePath();
+      ctx.fill();
     }
 
     ctx.restore();
   }
 
   // ------------------------------
-  // Header / UI
+  // Hit testing
   // ------------------------------
-  function updateHeader() {
-    docTitle.textContent = state.currentPdfName || "-";
-    pageInfo.textContent = `${state.currentPage} / ${state.totalPages || 0}`;
-
-    const modeMap = {
-      view: "閲覧",
-      line: "線描画",
-      rect: "四角描画",
-      eraser: "消しゴム"
-    };
-    modeLabel.textContent = modeMap[state.tool] || "閲覧";
-  }
-
-  function updateToolUI() {
-    [viewModeBtn, drawLineBtn, drawRectBtn, eraserBtn].forEach((btn) => btn.classList.remove("active"));
-    if (state.tool === "view") viewModeBtn.classList.add("active");
-    if (state.tool === "line") drawLineBtn.classList.add("active");
-    if (state.tool === "rect") drawRectBtn.classList.add("active");
-    if (state.tool === "eraser") eraserBtn.classList.add("active");
-
-    setTouchMode(state.tool !== "view" && state.drawing);
-    updateHeader();
-    updateBrushUI();
-  }
-
-  function setTool(tool) {
-    state.tool = tool;
-    state.currentDraft = null;
-    state.drawing = false;
-    state.drawingPage = null;
-    updateToolUI();
-    redrawAllOverlays();
-  }
-
-  // ------------------------------
-  // Mask creation / hit testing
-  // ------------------------------
-  function createLineDraft(startX, startY, overlayCanvas) {
-    const p = toRatioPoint(startX, startY, overlayCanvas);
-    return {
-      id: generateId("mask"),
-      type: "line",
-      widthRatio: state.brushWidth / Math.max(overlayCanvas.width, 1),
-      color: state.brushColor,
-      userHidden: false,
-      points: [p]
-    };
-  }
-
-  function createRectDraft(startX, startY, overlayCanvas) {
-    const p = toRatioPoint(startX, startY, overlayCanvas);
-    return {
-      id: generateId("mask"),
-      type: "rect",
-      x: p.x,
-      y: p.y,
-      w: 0,
-      h: 0,
-      color: state.brushColor,
-      userHidden: false
-    };
-  }
-
-  function finalizeDraft(pageNum) {
-    const pageState = getPageState(pageNum);
-    if (!pageState || !state.currentDraft) return;
-
-    const draft = state.currentDraft;
-
-    if (draft.type === "line") {
-      if (!draft.points || draft.points.length < 2) {
-        state.currentDraft = null;
-        redrawOverlayForPage(pageNum);
-        return;
-      }
-    }
-
-    if (draft.type === "rect") {
-      if (Math.abs(draft.w) < 0.002 || Math.abs(draft.h) < 0.002) {
-        state.currentDraft = null;
-        redrawOverlayForPage(pageNum);
-        return;
-      }
-      normalizeRectDraft(draft);
-    }
-
-    pageState.masks.push(draft);
-    state.currentDraft = null;
-    state.drawingPage = null;
-    redrawOverlayForPage(pageNum);
-    persistPageState();
-  }
-
-  function normalizeRectDraft(rect) {
-    if (rect.w < 0) {
-      rect.x = rect.x + rect.w;
-      rect.w = Math.abs(rect.w);
-    }
-    if (rect.h < 0) {
-      rect.y = rect.y + rect.h;
-      rect.h = Math.abs(rect.h);
-    }
-    rect.x = clamp(rect.x, 0, 1);
-    rect.y = clamp(rect.y, 0, 1);
-    rect.w = clamp(rect.w, 0, 1);
-    rect.h = clamp(rect.h, 0, 1);
-  }
-
   function hitTestRect(mask, px, py, overlayCanvas) {
     const pos = fromRatioPoint(mask.x, mask.y, overlayCanvas);
     const size = fromRatioPoint(mask.w, mask.h, overlayCanvas);
@@ -730,17 +852,20 @@
   }
 
   function hitTestLine(mask, px, py, overlayCanvas) {
-    if (!mask.points || mask.points.length < 2) return false;
-    const widthPx = Math.max(8, (mask.widthRatio || 0.02) * overlayCanvas.width);
-    const threshold = widthPx * 0.7 + 8;
-
-    for (let i = 1; i < mask.points.length; i++) {
-      const a = fromRatioPoint(mask.points[i - 1].x, mask.points[i - 1].y, overlayCanvas);
-      const b = fromRatioPoint(mask.points[i].x, mask.points[i].y, overlayCanvas);
-      const d = distancePointToSegment(px, py, a.x, a.y, b.x, b.y);
-      if (d <= threshold) return true;
+    if (
+      typeof mask.x1 !== "number" ||
+      typeof mask.y1 !== "number" ||
+      typeof mask.x2 !== "number" ||
+      typeof mask.y2 !== "number"
+    ) {
+      return false;
     }
-    return false;
+
+    const a = fromRatioPoint(mask.x1, mask.y1, overlayCanvas);
+    const b = fromRatioPoint(mask.x2, mask.y2, overlayCanvas);
+    const widthPx = Math.max(8, (mask.widthRatio || 0.02) * overlayCanvas.getBoundingClientRect().width);
+    const threshold = widthPx * 0.7 + 8;
+    return distancePointToSegment(px, py, a.x, a.y, b.x, b.y) <= threshold;
   }
 
   function findTopMaskAt(pageNum, px, py, includeHidden = true) {
@@ -761,6 +886,126 @@
     return null;
   }
 
+  function findAnnotationAt(pageNum, px, py) {
+    const pageState = getPageState(pageNum);
+    const pageView = getPageView(pageNum);
+    if (!pageState || !pageView) return null;
+
+    for (let i = pageState.annotations.length - 1; i >= 0; i--) {
+      const ann = pageState.annotations[i];
+      if (ann.type !== "mark") continue;
+      const p = fromRatioPoint(ann.x, ann.y, pageView.overlayCanvas);
+      const d = Math.hypot(px - p.x, py - p.y);
+      if (d <= 22) return { ann, index: i };
+    }
+    return null;
+  }
+
+  // ------------------------------
+  // Mask creation / annotations
+  // ------------------------------
+  function createLineDraft(startX, startY, overlayCanvas) {
+    const p = toRatioPoint(startX, startY, overlayCanvas);
+    return {
+      id: generateId("mask"),
+      type: "line",
+      widthRatio: state.brushWidth / Math.max(overlayCanvas.getBoundingClientRect().width, 1),
+      color: state.brushColor,
+      userHidden: false,
+      x1: p.x,
+      y1: p.y,
+      x2: p.x,
+      y2: p.y
+    };
+  }
+
+  function createRectDraft(startX, startY, overlayCanvas) {
+    const p = toRatioPoint(startX, startY, overlayCanvas);
+    return {
+      id: generateId("mask"),
+      type: "rect",
+      x: p.x,
+      y: p.y,
+      w: 0,
+      h: 0,
+      color: state.brushColor,
+      userHidden: false
+    };
+  }
+
+  function normalizeRectDraft(rect) {
+    if (rect.w < 0) {
+      rect.x = rect.x + rect.w;
+      rect.w = Math.abs(rect.w);
+    }
+    if (rect.h < 0) {
+      rect.y = rect.y + rect.h;
+      rect.h = Math.abs(rect.h);
+    }
+    rect.x = clamp(rect.x, 0, 1);
+    rect.y = clamp(rect.y, 0, 1);
+    rect.w = clamp(rect.w, 0, 1);
+    rect.h = clamp(rect.h, 0, 1);
+  }
+
+  function finalizeDraft(pageNum) {
+    const pageState = getPageState(pageNum);
+    if (!pageState || !state.currentDraft) return;
+
+    const draft = state.currentDraft;
+
+    if (draft.type === "line") {
+      const dx = Math.abs((draft.x2 ?? 0) - (draft.x1 ?? 0));
+      const dy = Math.abs((draft.y2 ?? 0) - (draft.y1 ?? 0));
+      if (dx + dy < 0.002) {
+        state.currentDraft = null;
+        redrawOverlayForPage(pageNum);
+        return;
+      }
+    }
+
+    if (draft.type === "rect") {
+      if (Math.abs(draft.w) < 0.002 || Math.abs(draft.h) < 0.002) {
+        state.currentDraft = null;
+        redrawOverlayForPage(pageNum);
+        return;
+      }
+      normalizeRectDraft(draft);
+    }
+
+    pushUndoSnapshot(pageNum);
+    pageState.masks.push(draft);
+    state.currentDraft = null;
+    state.drawingPage = null;
+    redrawOverlayForPage(pageNum);
+    persistPageState();
+  }
+
+  async function placeOrToggleMark(pageNum, px, py) {
+    const pageState = getPageState(pageNum);
+    const pageView = getPageView(pageNum);
+    if (!pageState || !pageView || !state.activeMarkType) return;
+
+    const existing = findAnnotationAt(pageNum, px, py);
+    pushUndoSnapshot(pageNum);
+
+    if (existing) {
+      pageState.annotations.splice(existing.index, 1);
+    } else {
+      const p = toRatioPoint(px, py, pageView.overlayCanvas);
+      pageState.annotations.push({
+        id: generateId("ann"),
+        type: "mark",
+        kind: state.activeMarkType,
+        x: p.x,
+        y: p.y
+      });
+    }
+
+    redrawAnnotationsForPage(pageNum);
+    await persistPageState();
+  }
+
   // ------------------------------
   // Pointer events
   // ------------------------------
@@ -774,7 +1019,14 @@
     const pos = getPointerPos(e, pageView.overlayCanvas);
     state.activePointerId = e.pointerId;
 
-    if (state.tool === "view") {
+    // 学習モード
+    if (state.mode === "study") {
+      if (state.activeMarkType) {
+        placeOrToggleMark(pageNum, pos.x, pos.y);
+        e.preventDefault();
+        return;
+      }
+
       const hit = findTopMaskAt(pageNum, pos.x, pos.y, true);
       if (hit) {
         hit.mask.userHidden = !hit.mask.userHidden;
@@ -785,14 +1037,15 @@
       return;
     }
 
-    // 描画・消しゴムは Apple Pencil のみ
+    // 作成モードは Pencil のみ
     if (!isPenEvent(e)) {
       return;
     }
 
-    if (state.tool === "eraser") {
+    if (state.createTool === "eraser") {
       const hit = findTopMaskAt(pageNum, pos.x, pos.y, true);
       if (hit) {
+        pushUndoSnapshot(pageNum);
         const pageState = getPageState(pageNum);
         pageState.masks.splice(hit.index, 1);
         redrawOverlayForPage(pageNum);
@@ -802,12 +1055,12 @@
       return;
     }
 
-    if (state.tool === "line" || state.tool === "rect") {
+    if (state.createTool === "line" || state.createTool === "rect") {
       state.drawing = true;
       state.drawingPage = pageNum;
       state.startX = pos.x;
       state.startY = pos.y;
-      state.currentDraft = state.tool === "line"
+      state.currentDraft = state.createTool === "line"
         ? createLineDraft(pos.x, pos.y, pageView.overlayCanvas)
         : createRectDraft(pos.x, pos.y, pageView.overlayCanvas);
 
@@ -831,14 +1084,8 @@
 
     if (state.currentDraft.type === "line") {
       const p = toRatioPoint(pos.x, pos.y, pageView.overlayCanvas);
-      const points = state.currentDraft.points;
-      const last = points[points.length - 1];
-      const dx = Math.abs((last?.x ?? 0) - p.x);
-      const dy = Math.abs((last?.y ?? 0) - p.y);
-
-      if (dx + dy > 0.0025) {
-        points.push(p);
-      }
+      state.currentDraft.x2 = p.x;
+      state.currentDraft.y2 = p.y;
     }
 
     if (state.currentDraft.type === "rect") {
@@ -922,36 +1169,31 @@
     });
   }
 
-  async function goToPage(pageNum) {
-    if (!state.pdfDoc) return;
-    const next = clamp(pageNum, 1, state.totalPages);
-    state.currentPage = next;
-    updateHeader();
-    await persistDocState();
-    scrollToPage(next, true);
-  }
-
   async function showAllMasks() {
-  // 全表示 = 全てのカバーを外す
-  for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
-    const pageState = getPageState(pageNum);
-    if (!pageState) continue;
-    pageState.masks.forEach((m) => { m.userHidden = true; });
-    redrawOverlayForPage(pageNum);
+    // 全表示 = 全てのカバーを外す
+    for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
+      const pageState = getPageState(pageNum);
+      if (!pageState) continue;
+      pageState.masks.forEach((m) => {
+        m.userHidden = true;
+      });
+      redrawOverlayForPage(pageNum);
+    }
+    await persistPageState();
   }
-  await persistPageState();
-}
 
-async function hideAllMasks() {
-  // 全隠し = 全てのカバーをつける
-  for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
-    const pageState = getPageState(pageNum);
-    if (!pageState) continue;
-    pageState.masks.forEach((m) => { m.userHidden = false; });
-    redrawOverlayForPage(pageNum);
+  async function hideAllMasks() {
+    // 全隠し = 全てのカバーをつける
+    for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
+      const pageState = getPageState(pageNum);
+      if (!pageState) continue;
+      pageState.masks.forEach((m) => {
+        m.userHidden = false;
+      });
+      redrawOverlayForPage(pageNum);
+    }
+    await persistPageState();
   }
-  await persistPageState();
-}
 
   // ------------------------------
   // Resize
@@ -991,20 +1233,16 @@ async function hideAllMasks() {
     await renderRecentList();
   });
 
-  viewModeBtn.addEventListener("click", () => setTool("view"));
-  drawLineBtn.addEventListener("click", () => setTool("line"));
-  drawRectBtn.addEventListener("click", () => setTool("rect"));
-  eraserBtn.addEventListener("click", () => setTool("eraser"));
+  createModeBtn.addEventListener("click", () => setMode("create"));
+  studyModeBtn.addEventListener("click", () => setMode("study"));
+
+  drawLineBtn.addEventListener("click", () => setCreateTool("line"));
+  drawRectBtn.addEventListener("click", () => setCreateTool("rect"));
+  eraserBtn.addEventListener("click", () => setCreateTool("eraser"));
+  undoBtn.addEventListener("click", undoLastAction);
 
   showAllBtn.addEventListener("click", showAllMasks);
   hideAllBtn.addEventListener("click", hideAllMasks);
-
-  if (prevPageBtn) {
-    prevPageBtn.addEventListener("click", () => goToPage(state.currentPage - 1));
-  }
-  if (nextPageBtn) {
-    nextPageBtn.addEventListener("click", () => goToPage(state.currentPage + 1));
-  }
 
   if (brushSizeInput) {
     brushSizeInput.addEventListener("input", (e) => {
@@ -1019,6 +1257,17 @@ async function hideAllMasks() {
       if (!chip) return;
       state.brushColor = chip.dataset.color || state.brushColor;
       updateBrushUI();
+    });
+  }
+
+  if (markTypeChips) {
+    markTypeChips.addEventListener("click", (e) => {
+      const chip = e.target.closest(".mark-chip");
+      if (!chip) return;
+      const next = chip.dataset.mark || null;
+      state.activeMarkType = state.activeMarkType === next ? null : next;
+      updateMarkUI();
+      updateHeader();
     });
   }
 
@@ -1040,6 +1289,7 @@ async function hideAllMasks() {
     await registerSW();
     await renderRecentList();
     updateBrushUI();
+    updateMarkUI();
     updateToolUI();
     showHome();
   }

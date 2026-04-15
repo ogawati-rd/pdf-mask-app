@@ -16,7 +16,7 @@
   --safe-left: env(safe-area-inset-left, 0px);
 
   --header-h: 86px;
-  --toolbar-h: 88px;
+  --toolbar-h: 96px;
   --toolbar-total-h: calc(var(--toolbar-h) + var(--safe-bottom) + 16px);
 }
 
@@ -124,8 +124,7 @@ button {
   gap: 12px;
 }
 
-.file-pick-btn,
-.primary-upload-btn {
+.file-pick-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -139,8 +138,7 @@ button {
   padding: 12px 16px;
 }
 
-.secondary-btn,
-.ghost-btn {
+.secondary-btn {
   min-height: 46px;
   padding: 0 14px;
   border-radius: 12px;
@@ -214,7 +212,7 @@ button {
 }
 
 /* ------------------------------
-   Viewer layout
+   Viewer
 ------------------------------ */
 
 #viewerScreen {
@@ -289,14 +287,15 @@ button {
   min-height: 30px;
   padding: 0 10px;
   border-radius: 999px;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
 }
 
-/* PDFスクロール領域 */
+/* PDF area */
+
 .viewer-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -312,7 +311,6 @@ button {
   overflow: hidden !important;
 }
 
-/* PDF全体ラッパ */
 .pdf-stage-wrap {
   width: 100%;
   min-height: 100%;
@@ -323,7 +321,6 @@ button {
     calc(14px + var(--safe-left));
 }
 
-/* 縦にページを積む */
 .pdf-pages-stack {
   width: 100%;
   display: flex;
@@ -332,7 +329,6 @@ button {
   gap: 18px;
 }
 
-/* 各ページ */
 .pdf-page-stage {
   position: relative;
   width: auto;
@@ -341,7 +337,7 @@ button {
   border-radius: 18px;
   border: 1px solid #2b3039;
   overflow: hidden;
-  box-shadow: 0 12px 36px rgba(0,0,0,0.4);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
 }
 
 .pdf-page-canvas {
@@ -364,6 +360,50 @@ button {
   touch-action: none;
 }
 
+/* annotations */
+.annotation-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  pointer-events: none;
+}
+
+.annotation-mark {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  min-width: 28px;
+  min-height: 28px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 18px;
+  line-height: 1;
+  background: rgba(15, 17, 21, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+}
+
+.annotation-mark.mark-star {
+  color: #ffd54a;
+}
+
+.annotation-mark.mark-review {
+  color: #ff8a80;
+}
+
+.annotation-mark.mark-question {
+  color: #80c3ff;
+}
+
+.annotation-mark.mark-done {
+  color: #8be28b;
+}
+
 /* ------------------------------
    Toolbar
 ------------------------------ */
@@ -375,19 +415,41 @@ button {
   bottom: 0;
   z-index: 1000;
   display: flex;
+  align-items: flex-start;
   gap: 10px;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   background: rgba(15, 17, 21, 0.95);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border-top: 1px solid rgba(255,255,255,0.06);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
   padding:
     10px
     calc(10px + var(--safe-right))
     calc(10px + var(--safe-bottom))
     calc(10px + var(--safe-left));
-  box-shadow: 0 -8px 24px rgba(0,0,0,0.28);
+  box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.28);
+}
+
+.toolbar-main {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tool-set {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.tool-set.is-hidden {
+  display: none;
 }
 
 .tool-btn {
@@ -453,11 +515,13 @@ button {
   color: var(--accent-2);
 }
 
-.color-control {
+.color-control,
+.mark-control {
   gap: 10px;
 }
 
-.color-chips {
+.color-chips,
+.mark-chips {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -469,7 +533,7 @@ button {
   min-width: 26px;
   min-height: 26px;
   border-radius: 999px;
-  border: 2px solid rgba(255,255,255,0.18);
+  border: 2px solid rgba(255, 255, 255, 0.18);
   background: var(--chip-color);
   padding: 0;
   flex: 0 0 auto;
@@ -477,7 +541,49 @@ button {
 
 .color-chip.active {
   border-color: #fff;
-  box-shadow: 0 0 0 2px rgba(88,166,255,0.45);
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.45);
+}
+
+.mark-chip {
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font-weight: 800;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.mark-chip.active {
+  background: linear-gradient(180deg, #2b7fe0, #205fa9);
+  border-color: #4c96eb;
+}
+
+/* mode switch */
+.mode-switch {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--panel-2);
+}
+
+.mode-switch-btn {
+  min-height: 54px;
+  padding: 0 16px;
+  color: var(--muted);
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.mode-switch-btn.active {
+  background: linear-gradient(180deg, #2b7fe0, #205fa9);
+  color: #fff;
 }
 
 /* ------------------------------
@@ -495,8 +601,7 @@ button {
     font-size: 26px;
   }
 
-  .file-pick-btn,
-  .primary-upload-btn {
+  .file-pick-btn {
     font-size: 17px;
   }
 
@@ -523,6 +628,17 @@ button {
     height: 24px;
     min-width: 24px;
     min-height: 24px;
+  }
+
+  .mark-chip {
+    min-width: 34px;
+    min-height: 34px;
+    font-size: 16px;
+  }
+
+  .mode-switch-btn {
+    min-height: 50px;
+    padding: 0 14px;
   }
 
   .viewer-header {
