@@ -361,6 +361,7 @@ button {
 }
 
 /* annotations */
+
 .annotation-layer {
   position: absolute;
   inset: 0;
@@ -563,6 +564,7 @@ button {
 }
 
 /* mode switch */
+
 .mode-switch {
   flex: 0 0 auto;
   display: flex;

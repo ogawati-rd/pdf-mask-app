@@ -16,6 +16,7 @@
   const recentList = document.getElementById("recentList");
   const recentEmpty = document.getElementById("recentEmpty");
   const clearHistoryBtn = document.getElementById("clearHistoryBtn");
+  const checkUpdateBtn = document.getElementById("checkUpdateBtn");
 
   const backBtn = document.getElementById("backBtn");
   const docTitle = document.getElementById("docTitle");
@@ -457,6 +458,52 @@
     }
   }
 
+  async function checkForAppUpdate() {
+  if (!("serviceWorker" in navigator)) {
+    alert("この環境では更新確認に対応していません。");
+    return;
+  }
+
+  try {
+    const registration = await navigator.serviceWorker.getRegistration();
+    if (!registration) {
+      alert("Service Worker が見つかりませんでした。Safariで一度開き直してから試してください。");
+      return;
+    }
+
+    let refreshed = false;
+
+    const onControllerChange = () => {
+      if (refreshed) return;
+      refreshed = true;
+      navigator.serviceWorker.removeEventListener("controllerchange", onControllerChange);
+      window.location.reload();
+    };
+
+    navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
+
+    await registration.update();
+
+    if (registration.waiting) {
+      registration.waiting.postMessage({ type: "SKIP_WAITING" });
+      return;
+    }
+
+    if (registration.installing) {
+      registration.installing.addEventListener("statechange", () => {
+        if (registration.waiting) {
+          registration.waiting.postMessage({ type: "SKIP_WAITING" });
+        }
+      });
+      return;
+    }
+
+    alert("最新の状態です。");
+  } catch (err) {
+    console.error(err);
+    alert("更新確認に失敗しました。通信状態を確認してもう一度お試しください。");
+  }
+}
   // ------------------------------
   // Screen control
   // ------------------------------
@@ -1222,24 +1269,28 @@
   // Events
   // ------------------------------
   pdfFileInput.addEventListener("change", async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    await handleFileSelect(file);
-    pdfFileInput.value = "";
-  });
+  const file = e.target.files?.[0];
+  if (!file) return;
+  await handleFileSelect(file);
+  pdfFileInput.value = "";
+ });
 
-  clearHistoryBtn.addEventListener("click", async () => {
-    const ok = confirm("最近開いたPDFの履歴と保存データをすべて削除しますか？");
-    if (!ok) return;
-    await dbClearAllDocs();
-    await renderRecentList();
-  });
+ if (checkUpdateBtn) {
+  checkUpdateBtn.addEventListener("click", checkForAppUpdate);
+ }
 
-  backBtn.addEventListener("click", async () => {
-    await persistDocState();
-    showHome();
-    await renderRecentList();
-  });
+ clearHistoryBtn.addEventListener("click", async () => {
+  const ok = confirm("最近開いたPDFの履歴と保存データをすべて削除しますか？");
+  if (!ok) return;
+  await dbClearAllDocs();
+  await renderRecentList();
+ });
+
+ backBtn.addEventListener("click", async () => {
+  await persistDocState();
+  showHome();
+  await renderRecentList();
+ });
 
   createModeBtn.addEventListener("click", () => setMode("create"));
   studyModeBtn.addEventListener("click", () => setMode("study"));

@@ -1,10 +1,10 @@
-const CACHE_NAME = "pdf-mask-app-v21";
+const CACHE_NAME = "pdf-mask-app-v22";
 
 const ASSETS = [
   "/pdf-mask-app/",
   "/pdf-mask-app/index.html",
-  "/pdf-mask-app/style.css?v=21",
-  "/pdf-mask-app/app.js?v=21",
+  "/pdf-mask-app/style.css?v=22",
+  "/pdf-mask-app/app.js?v=22",
   "/pdf-mask-app/manifest.json",
   "/pdf-mask-app/pdf.mjs",
   "/pdf-mask-app/pdf.worker.mjs"
@@ -33,6 +33,12 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+self.addEventListener("message", (event) => {
+  if (event.data && event.data.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
 
@@ -40,7 +46,7 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(req.url);
 
-  // ナビゲーションはネット優先、失敗時にキャッシュ
+  // ナビゲーションは network-first
   if (req.mode === "navigate") {
     event.respondWith(
       fetch(req)
@@ -56,18 +62,32 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // その他は cache-first
-  event.respondWith(
-    caches.match(req).then((cached) => {
-      if (cached) return cached;
+  // バージョン付きCSS/JSは cache-first
+  if (
+    url.pathname.startsWith("/pdf-mask-app/style.css") ||
+    url.pathname.startsWith("/pdf-mask-app/app.js") ||
+    url.pathname.startsWith("/pdf-mask-app/pdf.mjs") ||
+    url.pathname.startsWith("/pdf-mask-app/pdf.worker.mjs") ||
+    url.pathname.startsWith("/pdf-mask-app/manifest.json")
+  ) {
+    event.respondWith(
+      caches.match(req).then((cached) => {
+        if (cached) return cached;
 
-      return fetch(req).then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(req, copy);
+        return fetch(req).then((response) => {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(req, copy);
+          });
+          return response;
         });
-        return response;
-      });
-    })
+      })
+    );
+    return;
+  }
+
+  // それ以外
+  event.respondWith(
+    fetch(req).catch(() => caches.match(req))
   );
 });

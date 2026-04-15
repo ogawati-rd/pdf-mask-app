@@ -15,16 +15,15 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="PDF暗記" />
 
-  <link rel="stylesheet" href="./style.css?v=21" />
+  <link rel="stylesheet" href="./style.css?v=22" />
 </head>
 <body>
   <div id="app">
-    <!-- Home -->
     <section id="homeScreen" class="screen active">
       <header class="home-header">
         <h1>PDF暗記アプリ</h1>
         <p class="home-subtitle">PDFを読み込み、隠す教材を作成して学習</p>
-        <p class="app-version">Ver 2.1</p>
+        <p class="app-version">Ver 2.2</p>
       </header>
 
       <div class="home-actions">
@@ -38,6 +37,10 @@
           PDFを開く
         </label>
 
+        <button id="checkUpdateBtn" type="button" class="secondary-btn">
+          更新を確認
+        </button>
+
         <button id="clearHistoryBtn" type="button" class="secondary-btn">
           履歴を削除
         </button>
@@ -50,7 +53,6 @@
       </section>
     </section>
 
-    <!-- Viewer -->
     <section id="viewerScreen" class="screen">
       <header class="viewer-header">
         <div class="viewer-header-row">
@@ -73,9 +75,7 @@
       </main>
 
       <footer class="toolbar">
-        <!-- 左側：モードごとに出し分け -->
         <div class="toolbar-main">
-          <!-- 作成モード -->
           <div id="createTools" class="tool-set">
             <button id="drawLineBtn" type="button" class="tool-btn">線</button>
             <button id="drawRectBtn" type="button" class="tool-btn">四角</button>
@@ -139,7 +139,6 @@
             </div>
           </div>
 
-          <!-- 学習モード -->
           <div id="studyTools" class="tool-set is-hidden">
             <button id="showAllBtn" type="button" class="tool-btn">全表示</button>
             <button id="hideAllBtn" type="button" class="tool-btn">全隠し</button>
@@ -158,7 +157,6 @@
           </div>
         </div>
 
-        <!-- 右側：モード切替 -->
         <div id="modeSwitch" class="mode-switch" aria-label="モード切替">
           <button id="createModeBtn" type="button" class="mode-switch-btn">
             作成
@@ -174,7 +172,7 @@
   <script type="module">
     import * as pdfjsLib from "/pdf-mask-app/pdf.mjs";
     window.pdfjsLib = pdfjsLib;
-    await import("/pdf-mask-app/app.js?v=21");
+    await import("/pdf-mask-app/app.js?v=22");
   </script>
 </body>
 </html>
