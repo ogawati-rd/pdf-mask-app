@@ -61,7 +61,6 @@
     rendering: false,
     resizeTimer: null,
 
-    // pointer interaction
     drawing: false,
     drawingPage: null,
     startX: 0,
@@ -69,21 +68,16 @@
     activePointerId: null,
     currentDraft: null,
 
-    // brush
     brushWidth: 18,
     brushColor: "rgba(0,0,0,0.96)",
 
-    // study mark
     activeMarkType: null, // star | review | question | done | null
 
-    // current persistent doc state
     docState: null,
 
-    // rendered pages
     pageViews: new Map(),
     pagesContainer: null,
 
-    // undo
     undoStack: [],
 
     scrollRaf: null
@@ -255,9 +249,13 @@
           delete mask.points;
         }
       }
+
       doc.pages[key] = page;
     }
-    if (typeof doc.favorite !== "boolean") doc.favorite = false;
+
+    if (typeof doc.favorite !== "boolean") {
+      doc.favorite = false;
+    }
     doc.schemaVersion = 2;
     return doc;
   }
@@ -266,35 +264,45 @@
     return !mask.userHidden;
   }
 
-  function getPointerPos(e, overlayCanvas) {
+  // すべて「見た目のCSS座標」で扱う
+  function getCanvasMetrics(overlayCanvas) {
     const rect = overlayCanvas.getBoundingClientRect();
-    const x = clamp(e.clientX - rect.left, 0, rect.width);
-    const y = clamp(e.clientY - rect.top, 0, rect.height);
+    return {
+      rect,
+      cssWidth: rect.width,
+      cssHeight: rect.height,
+      pixelWidth: overlayCanvas.width,
+      pixelHeight: overlayCanvas.height,
+      scaleX: rect.width ? overlayCanvas.width / rect.width : 1,
+      scaleY: rect.height ? overlayCanvas.height / rect.height : 1
+    };
+  }
+
+  function getPointerPos(e, overlayCanvas) {
+    const { rect, cssWidth, cssHeight } = getCanvasMetrics(overlayCanvas);
+    const x = clamp(e.clientX - rect.left, 0, cssWidth);
+    const y = clamp(e.clientY - rect.top, 0, cssHeight);
     return { x, y, rect };
   }
 
   function toRatioPoint(px, py, overlayCanvas) {
-    const rect = overlayCanvas.getBoundingClientRect();
+    const { cssWidth, cssHeight } = getCanvasMetrics(overlayCanvas);
     return {
-      x: rect.width ? px / rect.width : 0,
-      y: rect.height ? py / rect.height : 0
+      x: cssWidth ? px / cssWidth : 0,
+      y: cssHeight ? py / cssHeight : 0
     };
   }
 
   function fromRatioPoint(rx, ry, overlayCanvas) {
-    const rect = overlayCanvas.getBoundingClientRect();
+    const { cssWidth, cssHeight } = getCanvasMetrics(overlayCanvas);
     return {
-      x: rx * rect.width,
-      y: ry * rect.height
+      x: rx * cssWidth,
+      y: ry * cssHeight
     };
   }
 
   function setTouchMode(disableScroll) {
-    if (disableScroll) {
-      viewerBody.classList.add("no-scroll");
-    } else {
-      viewerBody.classList.remove("no-scroll");
-    }
+    viewerBody.classList.toggle("no-scroll", disableScroll);
   }
 
   function downloadMeta(doc) {
@@ -304,6 +312,17 @@
 
   function isPenEvent(e) {
     return e.pointerType === "pen";
+  }
+
+  function updateBrushUI() {
+    if (brushSizeValue) brushSizeValue.textContent = String(state.brushWidth);
+
+    if (colorChips) {
+      const chips = colorChips.querySelectorAll(".color-chip");
+      chips.forEach((chip) => {
+        chip.classList.toggle("active", chip.dataset.color === state.brushColor);
+      });
+    }
   }
 
   function getPageView(pageNum) {
@@ -357,17 +376,6 @@
   // ------------------------------
   // UI helpers
   // ------------------------------
-  function updateBrushUI() {
-    if (brushSizeValue) brushSizeValue.textContent = String(state.brushWidth);
-
-    if (colorChips) {
-      const chips = colorChips.querySelectorAll(".color-chip");
-      chips.forEach((chip) => {
-        chip.classList.toggle("active", chip.dataset.color === state.brushColor);
-      });
-    }
-  }
-
   function updateMarkUI() {
     if (!markTypeChips) return;
     const chips = markTypeChips.querySelectorAll(".mark-chip");
@@ -740,12 +748,68 @@
     redrawAnnotationsForPage(pageNum);
   }
 
+  function drawMask(ctx, overlayCanvas, mask, isDraft) {
+    const color = mask.color || "rgba(0,0,0,0.96)";
+    const metrics = getCanvasMetrics(overlayCanvas);
+
+    ctx.save();
+    ctx.setTransform(metrics.scaleX, 0, 0, metrics.scaleY, 0, 0);
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = isDraft ? 0.88 : 1;
+
+    if (mask.type === "rect") {
+      const p = fromRatioPoint(mask.x, mask.y, overlayCanvas);
+      const size = fromRatioPoint(mask.w, mask.h, overlayCanvas);
+      ctx.fillRect(p.x, p.y, size.x, size.y);
+    }
+
+    if (mask.type === "line") {
+      if (
+        typeof mask.x1 !== "number" ||
+        typeof mask.y1 !== "number" ||
+        typeof mask.x2 !== "number" ||
+        typeof mask.y2 !== "number"
+      ) {
+        ctx.restore();
+        return;
+      }
+
+      const a = fromRatioPoint(mask.x1, mask.y1, overlayCanvas);
+      const b = fromRatioPoint(mask.x2, mask.y2, overlayCanvas);
+      const widthPx = Math.max(4, (mask.widthRatio || 0.02) * metrics.cssWidth);
+
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1) {
+        ctx.restore();
+        return;
+      }
+
+      const nx = -dy / len;
+      const ny = dx / len;
+      const half = widthPx / 2;
+
+      ctx.beginPath();
+      ctx.moveTo(a.x + nx * half, a.y + ny * half);
+      ctx.lineTo(b.x + nx * half, b.y + ny * half);
+      ctx.lineTo(b.x - nx * half, b.y - ny * half);
+      ctx.lineTo(a.x - nx * half, a.y - ny * half);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+
   function redrawOverlayForPage(pageNum) {
     const pageView = getPageView(pageNum);
     const pageState = getPageState(pageNum);
     if (!pageView || !pageState) return;
 
     const ctx = pageView.overlayCtx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, pageView.overlayCanvas.width, pageView.overlayCanvas.height);
 
     for (const mask of pageState.masks) {
@@ -778,59 +842,6 @@
     }
   }
 
-  function drawMask(ctx, overlayCanvas, mask, isDraft) {
-    const color = mask.color || "rgba(0,0,0,0.96)";
-
-    ctx.save();
-    ctx.fillStyle = color;
-    ctx.strokeStyle = color;
-    ctx.globalAlpha = isDraft ? 0.88 : 1;
-
-    if (mask.type === "rect") {
-      const p = fromRatioPoint(mask.x, mask.y, overlayCanvas);
-      const size = fromRatioPoint(mask.w, mask.h, overlayCanvas);
-      ctx.fillRect(p.x, p.y, size.x, size.y);
-    }
-
-    if (mask.type === "line") {
-      if (
-        typeof mask.x1 !== "number" ||
-        typeof mask.y1 !== "number" ||
-        typeof mask.x2 !== "number" ||
-        typeof mask.y2 !== "number"
-      ) {
-        ctx.restore();
-        return;
-      }
-
-      const a = fromRatioPoint(mask.x1, mask.y1, overlayCanvas);
-      const b = fromRatioPoint(mask.x2, mask.y2, overlayCanvas);
-      const widthPx = Math.max(4, (mask.widthRatio || 0.02) * overlayCanvas.getBoundingClientRect().width);
-
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const len = Math.hypot(dx, dy);
-      if (len < 1) {
-        ctx.restore();
-        return;
-      }
-
-      const nx = -dy / len;
-      const ny = dx / len;
-      const half = widthPx / 2;
-
-      ctx.beginPath();
-      ctx.moveTo(a.x + nx * half, a.y + ny * half);
-      ctx.lineTo(b.x + nx * half, b.y + ny * half);
-      ctx.lineTo(b.x - nx * half, b.y - ny * half);
-      ctx.lineTo(a.x - nx * half, a.y - ny * half);
-      ctx.closePath();
-      ctx.fill();
-    }
-
-    ctx.restore();
-  }
-
   // ------------------------------
   // Hit testing
   // ------------------------------
@@ -852,6 +863,8 @@
   }
 
   function hitTestLine(mask, px, py, overlayCanvas) {
+    const metrics = getCanvasMetrics(overlayCanvas);
+
     if (
       typeof mask.x1 !== "number" ||
       typeof mask.y1 !== "number" ||
@@ -863,8 +876,9 @@
 
     const a = fromRatioPoint(mask.x1, mask.y1, overlayCanvas);
     const b = fromRatioPoint(mask.x2, mask.y2, overlayCanvas);
-    const widthPx = Math.max(8, (mask.widthRatio || 0.02) * overlayCanvas.getBoundingClientRect().width);
+    const widthPx = Math.max(8, (mask.widthRatio || 0.02) * metrics.cssWidth);
     const threshold = widthPx * 0.7 + 8;
+
     return distancePointToSegment(px, py, a.x, a.y, b.x, b.y) <= threshold;
   }
 
@@ -906,10 +920,12 @@
   // ------------------------------
   function createLineDraft(startX, startY, overlayCanvas) {
     const p = toRatioPoint(startX, startY, overlayCanvas);
+    const metrics = getCanvasMetrics(overlayCanvas);
+
     return {
       id: generateId("mask"),
       type: "line",
-      widthRatio: state.brushWidth / Math.max(overlayCanvas.getBoundingClientRect().width, 1),
+      widthRatio: state.brushWidth / Math.max(metrics.cssWidth, 1),
       color: state.brushColor,
       userHidden: false,
       x1: p.x,
@@ -1019,7 +1035,6 @@
     const pos = getPointerPos(e, pageView.overlayCanvas);
     state.activePointerId = e.pointerId;
 
-    // 学習モード
     if (state.mode === "study") {
       if (state.activeMarkType) {
         placeOrToggleMark(pageNum, pos.x, pos.y);
@@ -1037,7 +1052,6 @@
       return;
     }
 
-    // 作成モードは Pencil のみ
     if (!isPenEvent(e)) {
       return;
     }
@@ -1170,26 +1184,20 @@
   }
 
   async function showAllMasks() {
-    // 全表示 = 全てのカバーを外す
     for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
       const pageState = getPageState(pageNum);
       if (!pageState) continue;
-      pageState.masks.forEach((m) => {
-        m.userHidden = true;
-      });
+      pageState.masks.forEach((m) => { m.userHidden = true; });
       redrawOverlayForPage(pageNum);
     }
     await persistPageState();
   }
 
   async function hideAllMasks() {
-    // 全隠し = 全てのカバーをつける
     for (let pageNum = 1; pageNum <= state.totalPages; pageNum++) {
       const pageState = getPageState(pageNum);
       if (!pageState) continue;
-      pageState.masks.forEach((m) => {
-        m.userHidden = false;
-      });
+      pageState.masks.forEach((m) => { m.userHidden = false; });
       redrawOverlayForPage(pageNum);
     }
     await persistPageState();
