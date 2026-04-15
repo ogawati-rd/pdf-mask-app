@@ -1,5 +1,4 @@
-const VERSION = "31";
-const CACHE_NAME = `pdf-mask-app-v${VERSION}`;
+const CACHE_NAME = "pdf-mask-app-v31";
 
 const ASSETS = [
   "./",
@@ -7,8 +6,11 @@ const ASSETS = [
   "./style.css?v=31",
   "./app.js?v=31",
   "./manifest.json",
-  "../pdf.mjs",
-  "../pdf.worker.mjs"
+  "./pdf.mjs",
+  "./pdf.worker.mjs",
+  "./src/app-core.js",
+  "./src/db.js",
+  "./src/utils.js"
 ];
 
 self.addEventListener("install", (event) => {
@@ -22,7 +24,12 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(
-        keys.map((key) => (key === CACHE_NAME ? Promise.resolve() : caches.delete(key)))
+        keys.map((key) => {
+          if (key !== CACHE_NAME) {
+            return caches.delete(key);
+          }
+          return Promise.resolve();
+        })
       )
     )
   );
@@ -30,21 +37,27 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("message", (event) => {
-  if (event.data?.type === "SKIP_WAITING") {
+  if (event.data && event.data.type === "SKIP_WAITING") {
     self.skipWaiting();
   }
 });
 
 self.addEventListener("fetch", (event) => {
-  const request = event.request;
-  if (request.method !== "GET") return;
+  const req = event.request;
 
-  if (request.mode === "navigate") {
+  if (req.method !== "GET") return;
+
+  const url = new URL(req.url);
+
+  // HTMLナビゲーションは network-first
+  if (req.mode === "navigate") {
     event.respondWith(
-      fetch(request)
+      fetch(req)
         .then((response) => {
           const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put("./index.html", copy));
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put("./index.html", copy);
+          });
           return response;
         })
         .catch(() => caches.match("./index.html"))
@@ -52,16 +65,32 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((response) => {
-        if (response.ok) {
+  // バージョン付き静的ファイル
+  if (
+    url.pathname.endsWith("/style.css") ||
+    url.pathname.endsWith("/app.js") ||
+    url.pathname.endsWith("/pdf.mjs") ||
+    url.pathname.endsWith("/pdf.worker.mjs") ||
+    url.pathname.endsWith("/manifest.json")
+  ) {
+    event.respondWith(
+      caches.match(req).then((cached) => {
+        if (cached) return cached;
+
+        return fetch(req).then((response) => {
           const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
-        }
-        return response;
-      });
-    })
+          caches.open(CACHE_NAME).then((cache) => {
+            cache.put(req, copy);
+          });
+          return response;
+        });
+      })
+    );
+    return;
+  }
+
+  // その他は network-first fallback
+  event.respondWith(
+    fetch(req).catch(() => caches.match(req))
   );
 });
