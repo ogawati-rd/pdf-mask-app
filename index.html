@@ -2,20 +2,20 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no"
-  />
-  <title>PDF暗記アプリ Ver 3.1</title>
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no"
+ />
+  <title>PDF暗記アプリ</title>
 
   <link rel="manifest" href="./manifest.json" />
   <meta name="theme-color" content="#0f1115" />
 
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="PDF暗記 3.1" />
+  <meta name="apple-mobile-web-app-title" content="PDF暗記" />
 
-  <link rel="stylesheet" href="./style.css?v=31" />
+  <link rel="stylesheet" href="./style.css?v=24" />
 </head>
 <body>
   <div id="app">
@@ -23,12 +23,11 @@
       <header class="home-header">
         <h1>PDF暗記アプリ</h1>
         <div class="app-version-row">
-          <p class="app-version">Ver 3.1</p>
+          <p class="app-version">Ver 2.4</p>
           <button id="checkUpdateBtn" type="button" class="version-link-btn">
             更新を確認
           </button>
         </div>
-        <p class="home-subtitle">Ver 2.4 の使い勝手を残しつつ、保存構造と描画効率を改善した版です</p>
       </header>
 
       <div class="home-actions">
@@ -41,16 +40,14 @@
           />
           PDFを開く
         </label>
-        <button id="clearHistoryBtn" type="button" class="secondary-btn danger">
+
+        <button id="clearHistoryBtn" type="button" class="secondary-btn">
           履歴を削除
         </button>
       </div>
 
       <section class="recent-section">
-        <div class="section-head">
-          <h2>最近開いたPDF</h2>
-          <p class="section-note">PDF 本体と学習データを分離保存して、2.4 より軽く再開しやすくしています</p>
-        </div>
+        <h2>最近開いたPDF</h2>
         <p id="recentEmpty" class="empty-text">まだPDFはありません</p>
         <div id="recentList" class="recent-list"></div>
       </section>
@@ -65,12 +62,6 @@
             <div id="docTitle" class="doc-title">-</div>
             <div id="pageInfo" class="page-info">0 / 0</div>
           </div>
-        </div>
-
-        <div class="viewer-header-row sub">
-          <div id="modeLabel" class="status-pill">学習</div>
-          <div id="toolLabel" class="status-pill">待機中</div>
-          <div id="renderLabel" class="status-pill subtle">準備中</div>
         </div>
       </header>
 
@@ -106,36 +97,36 @@
                   <button
                     type="button"
                     class="color-chip active"
-                    data-color="rgba(12,18,28,0.96)"
-                    style="--chip-color: rgba(12,18,28,0.96);"
+                    data-color="rgba(0,0,0,0.96)"
+                    style="--chip-color: rgba(0,0,0,0.96);"
                     aria-label="黒"
                   ></button>
                   <button
                     type="button"
                     class="color-chip"
-                    data-color="rgba(222,56,75,0.9)"
-                    style="--chip-color: rgba(222,56,75,0.9);"
+                    data-color="rgba(255,0,0,0.88)"
+                    style="--chip-color: rgba(255,0,0,0.88);"
                     aria-label="赤"
                   ></button>
                   <button
                     type="button"
                     class="color-chip"
-                    data-color="rgba(46,104,221,0.9)"
-                    style="--chip-color: rgba(46,104,221,0.9);"
+                    data-color="rgba(0,102,255,0.88)"
+                    style="--chip-color: rgba(0,102,255,0.88);"
                     aria-label="青"
                   ></button>
                   <button
                     type="button"
                     class="color-chip"
-                    data-color="rgba(30,140,92,0.9)"
-                    style="--chip-color: rgba(30,140,92,0.9);"
+                    data-color="rgba(0,160,80,0.88)"
+                    style="--chip-color: rgba(0,160,80,0.88);"
                     aria-label="緑"
                   ></button>
                   <button
                     type="button"
                     class="color-chip"
-                    data-color="rgba(224,125,24,0.9)"
-                    style="--chip-color: rgba(224,125,24,0.9);"
+                    data-color="rgba(255,140,0,0.88)"
+                    style="--chip-color: rgba(255,140,0,0.88);"
                     aria-label="オレンジ"
                   ></button>
                 </div>
@@ -154,8 +145,25 @@
                   <button type="button" class="mark-chip" data-mark="review" aria-label="要復習">!</button>
                   <button type="button" class="mark-chip" data-mark="question" aria-label="わからない">?</button>
                   <button type="button" class="mark-chip" data-mark="done" aria-label="覚えた">○</button>
-                  <button type="button" class="mark-chip mark-eraser-chip" data-mark="erase" aria-label="印を消す">
-                    <span aria-hidden="true">⌫</span>
+
+                  <button
+                    type="button"
+                    class="mark-chip mark-eraser-chip"
+                    data-mark="erase"
+                    aria-label="印を消す"
+                    title="印を消す"
+                  >
+                    <svg
+                      class="mark-eraser-icon"
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                      focusable="false"
+                    >
+                      <path
+                        d="M3.7 14.3 11.9 6a2 2 0 0 1 2.8 0l5.3 5.3a2 2 0 0 1 0 2.8l-4.2 4.2a2 2 0 0 1-1.4.6H9.8a2 2 0 0 1-1.4-.6l-4.7-4.7a1 1 0 0 1 0-1.3Zm6 3.2h4.7l4.2-4.2-5.3-5.3-7.5 7.5 4 4Zm7.8 2.8H21v1.5h-3.5z"
+                        fill="currentColor"
+                      />
+                    </svg>
                   </button>
                 </div>
               </div>
@@ -163,7 +171,7 @@
           </div>
         </div>
 
-        <div class="mode-switch" aria-label="モード切替">
+        <div id="modeSwitch" class="mode-switch" aria-label="モード切替">
           <button id="createModeBtn" type="button" class="mode-switch-btn">
             作成
           </button>
@@ -175,6 +183,10 @@
     </section>
   </div>
 
-  <script type="module" src="./app.js?v=31"></script>
+  <script type="module">
+    import * as pdfjsLib from "/pdf-mask-app/pdf.mjs";
+    window.pdfjsLib = pdfjsLib;
+    await import("/pdf-mask-app/app.js?v=24");
+  </script>
 </body>
 </html>
